@@ -5,7 +5,8 @@ import os
 pygame.init()
 
 # 图片保存目录
-IMAGE_DIR = r"d:\python\minecraft\image"
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+IMAGE_DIR = os.path.join(BASE_DIR, "image")
 if not os.path.exists(IMAGE_DIR):
     os.makedirs(IMAGE_DIR)
 

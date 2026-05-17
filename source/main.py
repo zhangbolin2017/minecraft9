@@ -1,11 +1,14 @@
 import sys
 import math
 import random
+import os
 import pygame
 
 
 WIDTH, HEIGHT = 640, 480
 FPS = 60
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+IMAGE_DIR = os.path.abspath(os.path.join(BASE_DIR, "..", "image"))
 
 TILE_SIZE = 64
 WORLD_W = 240
@@ -161,11 +164,9 @@ ANIMAL_TYPES = {
 }
 
 def load_animal_images():
-    import os
     images = {}
-    base_path = r"d:\python\minecraft\image"
     for name, spec in ANIMAL_TYPES.items():
-        file_path = os.path.join(base_path, spec["image_file"])
+        file_path = os.path.join(IMAGE_DIR, spec["image_file"])
         if os.path.exists(file_path):
             img = pygame.image.load(file_path).convert_alpha()
             # 缩放图片到设定的 size
@@ -176,9 +177,7 @@ def load_animal_images():
     return images
 
 def load_meat_image():
-    import os
-    base_path = r"d:\python\minecraft\image"
-    file_path = os.path.join(base_path, "meat.png")
+    file_path = os.path.join(IMAGE_DIR, "meat.png")
     if os.path.exists(file_path):
         img = pygame.image.load(file_path).convert_alpha()
         return pygame.transform.scale(img, (16, 16))
@@ -354,9 +353,7 @@ def draw_nether_gold_ore_block(screen, x, y, size):
     pygame.draw.rect(screen, (24, 8, 8), pygame.Rect(x, y, size, size), 1)
 
 def load_player_image():
-    import os
-    base_path = r"d:\python\minecraft\image"
-    file_path = os.path.join(base_path, "player.png")
+    file_path = os.path.join(IMAGE_DIR, "player.png")
     if os.path.exists(file_path):
         img = pygame.image.load(file_path).convert_alpha()
         return pygame.transform.scale(img, (PLAYER_SIZE, PLAYER_SIZE))
