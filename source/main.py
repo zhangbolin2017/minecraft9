@@ -63,16 +63,24 @@ STICK_COLOR = (150, 112, 62)
 INITIAL_ANIMAL_COUNT = 10
 INITIAL_ZOMBIE_COUNT = 3
 INITIAL_SKELETON_COUNT = 2
+INITIAL_ENDERMAN_COUNT = 5
 INITIAL_FISH_COUNT = 7
 NIGHT_ZOMBIE_TARGET = 6
 NIGHT_ZOMBIE_SPAWN_DELAY = 4.0
 NIGHT_SKELETON_TARGET = 4
+NIGHT_ENDERMAN_MIN_TARGET = 5
+NIGHT_ENDERMAN_MAX_TARGET = 18
 ZOMBIE_CHASE_SPEED = 95
 ZOMBIE_BURN_INTERVAL = 0.6
 SKELETON_MOVE_SPEED = 72
 SKELETON_BURN_INTERVAL = 0.6
+ENDERMAN_MOVE_SPEED = 88
 FIRE_DAMAGE_INTERVAL = 0.45
 PORTAL_TELEPORT_COOLDOWN = 0.8
+ENDER_PEARL_TELEPORT_RANGE = TILE_SIZE * 8
+ENDERMAN_PLAYER_SPAWN_RADIUS = 5
+HOSTILE_TOUCH_DAMAGE = 1
+HOSTILE_TOUCH_DAMAGE_INTERVAL = 0.8
 SKELETON_MIN_RANGE = 140
 SKELETON_MAX_RANGE = 240
 SKELETON_SHOOT_RANGE = 320
@@ -111,7 +119,7 @@ DIAMOND_BLOCK_SLOT_INDEX = 16
 OBSIDIAN_SLOT_INDEX = 17
 HOTBAR_SLOT_COUNT = 22
 VISIBLE_HOTBAR_SLOTS = 9
-BACKPACK_SLOT_COUNT = 13
+BACKPACK_SLOT_COUNT = 12
 HAND_ATTACK_DAMAGE = 1
 WOOD_PICKAXE_ATTACK_DAMAGE = 2
 STONE_PICKAXE_ATTACK_DAMAGE = 3
@@ -140,6 +148,15 @@ FURNACE_FUEL_PER_ITEM = 1
 INITIAL_PIGLIN_COUNT = 12
 NETHER_PIGLIN_TARGET = 14
 NETHER_PIGLIN_SPAWN_DELAY = 3.0
+INITIAL_BLAZE_COUNT = 5
+NETHER_BLAZE_TARGET = 6
+NETHER_BLAZE_SPAWN_DELAY = 4.0
+BLAZE_MOVE_SPEED = 58
+BLAZE_AGGRO_DURATION = 6.0
+BLAZE_WANDER_INTERVAL_MIN = 1.2
+BLAZE_WANDER_INTERVAL_MAX = 2.8
+BLAZE_IDLE_CHANCE = 0.25
+BLAZE_IGNITE_DURATION = 2.4
 VILLAGER_SIZE = 30
 VILLAGER_SPEED = 32
 VILLAGER_TRADE_RANGE = 84
@@ -148,6 +165,12 @@ VILLAGER_HP = 8
 IRON_GOLEM_SIZE = 40
 IRON_GOLEM_SPEED = 22
 IRON_GOLEM_HP = 5
+VILLAGER_WANDER_INTERVAL_MIN = 1.8
+VILLAGER_WANDER_INTERVAL_MAX = 4.5
+VILLAGER_IDLE_CHANCE = 0.4
+IRON_GOLEM_WANDER_INTERVAL_MIN = 3.0
+IRON_GOLEM_WANDER_INTERVAL_MAX = 6.5
+IRON_GOLEM_IDLE_CHANCE = 0.2
 VILLAGER_TRADES = [
     {"item": "iron_sword", "cost": 3, "label": "Iron Sword"},
     {"item": "diamond_sword", "cost": 6, "label": "Diamond Sword"},
@@ -160,7 +183,9 @@ ANIMAL_TYPES = {
     "Fish": {"color": RAW_FISH_COLOR, "size": 22, "hp": 1, "image_file": "fish.png"},
     "Zombie": {"color": (70, 145, 70), "size": 30, "hp": 4, "image_file": "zombie.png"},
     "Skeleton": {"color": (225, 225, 225), "size": 30, "hp": 4, "image_file": "skeleton.png"},
+    "Enderman": {"color": (28, 20, 32), "size": 42, "hp": 5, "image_file": "enderman.png"},
     "Piglin": {"color": (216, 164, 144), "size": 30, "hp": 4, "image_file": "piglin.png"},
+    "Blaze": {"color": (255, 196, 70), "size": 30, "hp": 3, "image_file": "blaze.png"},
 }
 
 def load_animal_images():
@@ -1124,6 +1149,92 @@ def draw_piglin(screen, sx, sy, size, facing_right):
     pygame.draw.rect(screen, (30, 18, 18), pygame.Rect(eye_x, sy + size // 3, 2, 2))
 
 
+def draw_blaze(screen, sx, sy, size, facing_right):
+    pattern = [
+        "00111100",
+        "01222210",
+        "12333321",
+        "12344321",
+        "12333321",
+        "01222210",
+        "00111100",
+        "00011000",
+    ]
+    palette = {
+        "0": None,
+        "1": (244, 188, 54),
+        "2": (255, 222, 82),
+        "3": (255, 164, 52),
+        "4": (110, 44, 10),
+    }
+    draw_pixel_art(screen, sx, sy, size, pattern, palette)
+    eye_y = sy + size // 3
+    eye_left = sx + (size * 3 // 8 if facing_right else size * 2 // 8)
+    eye_right = sx + (size * 5 // 8 if facing_right else size * 4 // 8)
+    pygame.draw.rect(screen, (82, 24, 8), pygame.Rect(eye_left, eye_y, 2, 2))
+    pygame.draw.rect(screen, (82, 24, 8), pygame.Rect(eye_right, eye_y, 2, 2))
+    rod_color = (232, 196, 74)
+    rod_shadow = (176, 118, 28)
+    for index, rod_y in enumerate((4, 10, 16, 22)):
+        offset = -1 if index % 2 == 0 else 1
+        left_x = sx + size // 2 - 10 + offset
+        right_x = sx + size // 2 + 6 - offset
+        pygame.draw.rect(screen, rod_color, pygame.Rect(left_x, sy + rod_y, 3, 10))
+        pygame.draw.rect(screen, rod_color, pygame.Rect(right_x, sy + rod_y + 1, 3, 10))
+        pygame.draw.rect(screen, rod_shadow, pygame.Rect(left_x, sy + rod_y + 8, 3, 2))
+        pygame.draw.rect(screen, rod_shadow, pygame.Rect(right_x, sy + rod_y + 9, 3, 2))
+
+
+def draw_enderman(screen, sx, sy, size, facing_right):
+    body = (26, 22, 32)
+    body_shadow = (18, 14, 22)
+    eye = (236, 144, 255)
+    pixel = max(2, size // 10)
+    head_w = pixel * 4
+    head_h = pixel * 3
+    body_w = pixel * 2
+    body_h = pixel * 4
+    limb_w = pixel
+    arm_h = pixel * 4
+    leg_h = pixel * 4
+
+    center_x = sx + size // 2
+    head_x = center_x - head_w // 2
+    head_y = sy + pixel
+    body_x = center_x - body_w // 2
+    body_y = head_y + head_h
+    left_arm_x = body_x - limb_w
+    right_arm_x = body_x + body_w
+    arm_y = body_y + pixel // 2
+    left_leg_x = body_x
+    right_leg_x = body_x + body_w - limb_w
+    leg_y = body_y + body_h
+
+    pygame.draw.rect(screen, body, pygame.Rect(head_x, head_y, head_w, head_h))
+    pygame.draw.rect(screen, body, pygame.Rect(body_x, body_y, body_w, body_h))
+    pygame.draw.rect(screen, body, pygame.Rect(left_arm_x, arm_y, limb_w, arm_h))
+    pygame.draw.rect(screen, body, pygame.Rect(right_arm_x, arm_y, limb_w, arm_h))
+    pygame.draw.rect(screen, body, pygame.Rect(left_leg_x, leg_y, limb_w, leg_h))
+    pygame.draw.rect(screen, body, pygame.Rect(right_leg_x, leg_y, limb_w, leg_h))
+
+    pygame.draw.rect(screen, body_shadow, pygame.Rect(head_x + head_w - pixel, head_y, pixel, head_h))
+    pygame.draw.rect(screen, body_shadow, pygame.Rect(body_x + body_w - pixel, body_y, pixel, body_h))
+
+    eye_y = head_y + pixel
+    left_eye_x = head_x + pixel
+    right_eye_x = head_x + head_w - pixel * 2
+    eye_h = max(2, pixel // 2)
+    pygame.draw.rect(screen, eye, pygame.Rect(left_eye_x, eye_y, pixel, eye_h))
+    pygame.draw.rect(screen, eye, pygame.Rect(right_eye_x, eye_y, pixel, eye_h))
+
+    if facing_right:
+        pygame.draw.rect(screen, body_shadow, pygame.Rect(right_arm_x, arm_y + arm_h - pixel, limb_w, pixel))
+        pygame.draw.rect(screen, body_shadow, pygame.Rect(right_leg_x, leg_y + leg_h - pixel, limb_w, pixel))
+    else:
+        pygame.draw.rect(screen, body_shadow, pygame.Rect(left_arm_x, arm_y + arm_h - pixel, limb_w, pixel))
+        pygame.draw.rect(screen, body_shadow, pygame.Rect(left_leg_x, leg_y + leg_h - pixel, limb_w, pixel))
+
+
 def ground_top_y_for_x(world_x, blocks):
     """Get world y of the top surface block for a world x position."""
     tile_x = int(world_x // TILE_SIZE)
@@ -1153,6 +1264,45 @@ def find_nether_surface_y(tile_x, blocks):
         if above_1 is None and above_2 is None:
             return y * TILE_SIZE
     return None
+
+
+def find_preferred_nether_spawn_tile(center_tile, blocks, search_radius=24):
+    min_tile = max(1, center_tile - search_radius)
+    max_tile = min(WORLD_W - 2, center_tile + search_radius)
+    preferred_min_surface_y = (WORLD_H // 2 + 8) * TILE_SIZE
+    best_tile = None
+    best_score = None
+
+    for require_lower_floor in (True, False):
+        for tile_x in range(min_tile, max_tile + 1):
+            surface_y = find_nether_surface_y(tile_x, blocks)
+            if surface_y is None:
+                continue
+            if require_lower_floor and surface_y < preferred_min_surface_y:
+                continue
+
+            support_width = 0
+            for offset in range(-2, 3):
+                neighbor_x = tile_x + offset
+                if neighbor_x < 1 or neighbor_x > WORLD_W - 2:
+                    continue
+                neighbor_surface_y = find_nether_surface_y(neighbor_x, blocks)
+                if neighbor_surface_y is None:
+                    continue
+                if abs(neighbor_surface_y - surface_y) <= TILE_SIZE:
+                    support_width += 1
+
+            score = (
+                support_width,
+                surface_y,
+                -abs(tile_x - center_tile),
+            )
+            if best_score is None or score > best_score:
+                best_score = score
+                best_tile = tile_x
+        if best_tile is not None:
+            return best_tile
+    return center_tile
 
 
 def get_entity_support_y(entity_rect, blocks):
@@ -1214,9 +1364,11 @@ def place_house(blocks, tree_blocks, left_tile, ground_y):
                 blocks.pop((tx, ty), None)
 
     remove_tree_blocks_in_tile_rect(tree_blocks, left_tile - 1, top_y - 1, left_tile + width, floor_y + 1)
-    villager_x = (left_tile + width / 2) * TILE_SIZE - VILLAGER_SIZE / 2
+    interior_left = (left_tile + 1) * TILE_SIZE
+    interior_right = (left_tile + width - 1) * TILE_SIZE - VILLAGER_SIZE
+    villager_x = (interior_left + interior_right) / 2
     villager_y = floor_y * TILE_SIZE - VILLAGER_SIZE
-    return villager_x, villager_y
+    return villager_x, villager_y, interior_left, interior_right
 
 
 def create_village(blocks, tree_blocks):
@@ -1251,20 +1403,22 @@ def create_village(blocks, tree_blocks):
         ground_y = can_place_house(blocks, house_left, house_width)
         if ground_y is None:
             continue
-        villager_x, villager_y = place_house(blocks, tree_blocks, house_left, ground_y)
+        villager_x, villager_y, home_left, home_right = place_house(blocks, tree_blocks, house_left, ground_y)
+        villager_rect = pygame.Rect(math.floor(villager_x), math.floor(villager_y), VILLAGER_SIZE, VILLAGER_SIZE)
+        move_rect_to_safe_ground(villager_rect, blocks, min_x=home_left, max_x=home_right)
         villagers.append(
             {
-                "x": villager_x,
-                "y": villager_y,
-                "spawn_x": villager_x,
-                "spawn_y": villager_y,
+                "x": float(villager_rect.x),
+                "y": float(villager_rect.y),
+                "spawn_x": float(villager_rect.x),
+                "spawn_y": float(villager_rect.y),
                 "size": VILLAGER_SIZE,
                 "vx": random.choice([-1, 1]) * VILLAGER_SPEED,
                 "trade_item": trade["item"],
                 "trade_cost": trade["cost"],
                 "trade_label": trade["label"],
-                "home_left": house_left * TILE_SIZE,
-                "home_right": (house_left + house_width - 1) * TILE_SIZE,
+                "home_left": home_left,
+                "home_right": home_right,
                 "facing_right": True,
                 "hp": VILLAGER_HP,
             }
@@ -1277,21 +1431,33 @@ def create_iron_golems(villagers, blocks):
         return []
 
     min_home = min(villager["home_left"] for villager in villagers)
-    max_home = max(villager["home_right"] for villager in villagers)
-    center_x = (min_home + max_home) / 2
-    ground_y = ground_top_y_for_x(center_x, blocks)
-    golem_x = center_x - IRON_GOLEM_SIZE / 2
+    max_home = max(villager["home_right"] + villager["size"] for villager in villagers)
+    right_patrol_left = max_home + TILE_SIZE
+    right_patrol_right = right_patrol_left + TILE_SIZE * 4 - IRON_GOLEM_SIZE
+    if right_patrol_right <= WORLD_W * TILE_SIZE - IRON_GOLEM_SIZE - TILE_SIZE:
+        patrol_left = right_patrol_left
+        patrol_right = right_patrol_right
+    else:
+        left_patrol_right = max(TILE_SIZE, min_home - TILE_SIZE - IRON_GOLEM_SIZE)
+        left_patrol_left = max(0, left_patrol_right - TILE_SIZE * 4)
+        patrol_left = left_patrol_left
+        patrol_right = max(patrol_left, left_patrol_right)
+
+    golem_x = (patrol_left + patrol_right) / 2
+    ground_y = ground_top_y_for_x(golem_x + IRON_GOLEM_SIZE / 2, blocks)
     golem_y = ground_y - IRON_GOLEM_SIZE
+    golem_rect = pygame.Rect(math.floor(golem_x), math.floor(golem_y), IRON_GOLEM_SIZE, IRON_GOLEM_SIZE)
+    move_rect_to_safe_ground(golem_rect, blocks, min_x=patrol_left, max_x=patrol_right)
     return [
         {
-            "x": golem_x,
-            "y": golem_y,
-            "spawn_x": golem_x,
-            "spawn_y": golem_y,
+            "x": float(golem_rect.x),
+            "y": float(golem_rect.y),
+            "spawn_x": float(golem_rect.x),
+            "spawn_y": float(golem_rect.y),
             "size": IRON_GOLEM_SIZE,
             "vx": random.choice([-1, 1]) * IRON_GOLEM_SPEED,
-            "home_left": min_home - TILE_SIZE,
-            "home_right": max_home + TILE_SIZE,
+            "home_left": patrol_left,
+            "home_right": patrol_right,
             "facing_right": True,
             "hp": IRON_GOLEM_HP,
         }
@@ -1302,8 +1468,14 @@ def update_villagers(villagers, blocks, dt, items, villager_respawn_queue):
     for villager in villagers[:]:
         if "vy" not in villager:
             villager["vy"] = 0.0
-        if random.random() < 0.01:
-            villager["vx"] *= -1
+        update_npc_wander(
+            villager,
+            dt,
+            VILLAGER_SPEED,
+            VILLAGER_WANDER_INTERVAL_MIN,
+            VILLAGER_WANDER_INTERVAL_MAX,
+            VILLAGER_IDLE_CHANCE,
+        )
 
         villager["vy"] += GRAVITY * dt
         villager["y"] += villager["vy"] * dt
@@ -1341,6 +1513,14 @@ def update_villagers(villagers, blocks, dt, items, villager_respawn_queue):
         if support_y is not None and villager["y"] + villager["size"] >= support_y:
             villager["y"] = support_y - villager["size"]
             villager["vy"] = 0.0
+            villager_rect.y = math.floor(villager["y"])
+
+        if resolve_rect_out_of_solids(villager_rect, blocks):
+            villager["x"] = float(villager_rect.x)
+            villager["y"] = float(villager_rect.y)
+            villager["vy"] = 0.0
+        villager["x"] = max(villager["home_left"], min(villager["x"], villager["home_right"]))
+        villager["facing_right"] = villager["vx"] >= 0
 
         fire_hits = accumulate_fire_damage(villager, rect_overlaps_block_type(villager_rect, blocks, "fire"), dt)
         if fire_hits > 0:
@@ -1388,8 +1568,14 @@ def update_iron_golems(iron_golems, blocks, dt, items, iron_golem_respawn_queue)
     for golem in iron_golems[:]:
         if "vy" not in golem:
             golem["vy"] = 0.0
-        if random.random() < 0.006:
-            golem["vx"] *= -1
+        update_npc_wander(
+            golem,
+            dt,
+            IRON_GOLEM_SPEED,
+            IRON_GOLEM_WANDER_INTERVAL_MIN,
+            IRON_GOLEM_WANDER_INTERVAL_MAX,
+            IRON_GOLEM_IDLE_CHANCE,
+        )
 
         golem["vy"] += GRAVITY * dt
         golem["y"] += golem["vy"] * dt
@@ -1427,6 +1613,14 @@ def update_iron_golems(iron_golems, blocks, dt, items, iron_golem_respawn_queue)
         if support_y is not None and golem["y"] + golem["size"] >= support_y:
             golem["y"] = support_y - golem["size"]
             golem["vy"] = 0.0
+            golem_rect.y = math.floor(golem["y"])
+
+        if resolve_rect_out_of_solids(golem_rect, blocks):
+            golem["x"] = float(golem_rect.x)
+            golem["y"] = float(golem_rect.y)
+            golem["vy"] = 0.0
+        golem["x"] = max(golem["home_left"], min(golem["x"], golem["home_right"]))
+        golem["facing_right"] = golem["vx"] >= 0
 
         fire_hits = accumulate_fire_damage(golem, rect_overlaps_block_type(golem_rect, blocks, "fire"), dt)
         if fire_hits > 0:
@@ -1544,6 +1738,76 @@ def get_solid_block_rects(rect, blocks):
     return hit_rects
 
 
+def resolve_rect_out_of_solids(rect, blocks, max_vertical_shift=TILE_SIZE * 4):
+    if not get_solid_block_rects(rect, blocks):
+        return False
+
+    base_x = rect.x
+    base_y = rect.y
+    step = max(1, TILE_SIZE // 8)
+    max_x = WORLD_W * TILE_SIZE - rect.width
+    max_y = WORLD_H * TILE_SIZE - rect.height
+    horizontal_offsets = [0, -step, step, -TILE_SIZE // 2, TILE_SIZE // 2, -TILE_SIZE, TILE_SIZE]
+
+    for rise in range(0, max_vertical_shift + 1, step):
+        test_y = max(-4 * TILE_SIZE, min(base_y - rise, max_y))
+        for offset_x in horizontal_offsets:
+            test_x = max(0, min(base_x + offset_x, max_x))
+            test_rect = pygame.Rect(int(test_x), int(test_y), rect.width, rect.height)
+            if get_solid_block_rects(test_rect, blocks):
+                continue
+            rect.x = test_rect.x
+            rect.y = test_rect.y
+            return True
+    return False
+
+
+def move_rect_to_safe_ground(rect, blocks, min_x=0, max_x=None, max_horizontal_shift=TILE_SIZE * 6):
+    if max_x is None:
+        max_x = WORLD_W * TILE_SIZE - rect.width
+    min_x = max(0, min_x)
+    max_x = max(min_x, min(max_x, WORLD_W * TILE_SIZE - rect.width))
+    base_center_x = rect.centerx
+    tile_shifts = max(1, int(math.ceil(max_horizontal_shift / TILE_SIZE)))
+    offsets = [0]
+    for step in range(1, tile_shifts + 1):
+        offsets.extend([-step * TILE_SIZE, step * TILE_SIZE])
+
+    for offset in offsets:
+        center_x = base_center_x + offset
+        test_x = int(round(center_x - rect.width / 2))
+        test_x = max(min_x, min(test_x, max_x))
+        support_y = ground_top_y_for_x(test_x + rect.width / 2, blocks)
+        test_y = int(round(support_y - rect.height))
+        test_rect = pygame.Rect(test_x, test_y, rect.width, rect.height)
+        if not get_solid_block_rects(test_rect, blocks):
+            rect.x = test_rect.x
+            rect.y = test_rect.y
+            return True
+        adjusted_rect = test_rect.copy()
+        if resolve_rect_out_of_solids(adjusted_rect, blocks):
+            foot_probe = pygame.Rect(adjusted_rect.x, adjusted_rect.bottom, adjusted_rect.width, max(2, TILE_SIZE // 8))
+            if get_solid_block_rects(foot_probe, blocks):
+                adjusted_rect.x = max(min_x, min(adjusted_rect.x, max_x))
+                rect.x = adjusted_rect.x
+                rect.y = adjusted_rect.y
+                return True
+    return False
+
+
+def update_npc_wander(entity, dt, speed, min_interval, max_interval, idle_chance):
+    if "wander_timer" not in entity:
+        entity["wander_timer"] = random.uniform(min_interval, max_interval)
+    entity["wander_timer"] -= dt
+    if entity["wander_timer"] > 0:
+        return
+    if random.random() < idle_chance:
+        entity["vx"] = 0.0
+    else:
+        entity["vx"] = random.choice([-1, 1]) * speed
+    entity["wander_timer"] = random.uniform(min_interval, max_interval)
+
+
 def rect_overlaps_water(rect, blocks):
     left_tile = max(0, int(rect.left // TILE_SIZE))
     right_tile = min(WORLD_W - 1, int((rect.right - 1) // TILE_SIZE))
@@ -1576,6 +1840,35 @@ def rect_overlaps_block_type(rect, blocks, target_type):
     return False
 
 
+def try_enderman_dodge(animal, blocks):
+    dodge_offsets = [-3, 3, -5, 5, -2, 2]
+    random.shuffle(dodge_offsets)
+    max_x = WORLD_W * TILE_SIZE - animal["size"]
+    max_y = WORLD_H * TILE_SIZE - animal["size"]
+    for offset_tiles in dodge_offsets:
+        target_x = animal["x"] + offset_tiles * TILE_SIZE
+        target_x = max(0, min(target_x, max_x))
+        support_y = ground_top_y_for_x(target_x + animal["size"] / 2, blocks)
+        target_y = max(-4 * TILE_SIZE, min(support_y - animal["size"], max_y))
+        target_rect = pygame.Rect(
+            math.floor(target_x),
+            math.floor(target_y),
+            animal["size"],
+            animal["size"],
+        )
+        if get_solid_block_rects(target_rect, blocks):
+            continue
+        if rect_overlaps_block_type(target_rect, blocks, "lava"):
+            continue
+        animal["x"] = float(target_x)
+        animal["y"] = float(target_y)
+        animal["vy"] = 0.0
+        animal["vx"] = ENDERMAN_MOVE_SPEED * (1 if offset_tiles > 0 else -1)
+        animal["facing_right"] = offset_tiles > 0
+        return True
+    return False
+
+
 def accumulate_fire_damage(state, touching_fire, dt):
     if not touching_fire:
         state["fire_damage_timer"] = 0.0
@@ -1587,7 +1880,7 @@ def accumulate_fire_damage(state, touching_fire, dt):
     return hits
 
 
-def spawn_animal_by_name(name, blocks, occupied_tiles=None):
+def spawn_animal_by_name(name, blocks, occupied_tiles=None, preferred_tile_x=None, search_radius=5):
     """Spawn one animal by type, preferring a tile different from occupied ones."""
     if occupied_tiles is None:
         occupied_tiles = set()
@@ -1626,18 +1919,30 @@ def spawn_animal_by_name(name, blocks, occupied_tiles=None):
             "palette": {"body": RAW_FISH_COLOR, "fin": (250, 250, 250), "eye": (24, 24, 24)},
         }
 
+    candidate_columns = []
+    if preferred_tile_x is not None:
+        left = max(1, preferred_tile_x - search_radius)
+        right = min(WORLD_W - 2, preferred_tile_x + search_radius)
+        candidate_columns.extend(range(left, right + 1))
+    fallback_columns = list(range(1, WORLD_W - 1))
+    random.shuffle(candidate_columns)
+    random.shuffle(fallback_columns)
+
     tile_x = random.randint(1, WORLD_W - 2)
-    for _ in range(40):
-        tile_x = random.randint(1, WORLD_W - 2)
-        # Avoid water columns for spawn
-        is_water = False
-        for y in range(WORLD_H):
-            if blocks.get((tile_x, y)) == "water":
-                is_water = True
-                break
-        
-        if tile_x not in occupied_tiles and not is_water:
+    for columns in (candidate_columns, fallback_columns):
+        for candidate_x in columns:
+            is_water = False
+            for y in range(WORLD_H):
+                if blocks.get((candidate_x, y)) == "water":
+                    is_water = True
+                    break
+            if candidate_x in occupied_tiles or is_water:
+                continue
+            tile_x = candidate_x
             break
+        else:
+            continue
+        break
 
     x = tile_x * TILE_SIZE + random.uniform(8, TILE_SIZE - 8)
     ground_top = ground_top_y_for_x(x, blocks)
@@ -1656,10 +1961,11 @@ def spawn_animal_by_name(name, blocks, occupied_tiles=None):
     }
 
 
-def spawn_nether_piglin(blocks, occupied_tiles=None, preferred_tile_x=None, search_radius=26):
+def spawn_nether_surface_mob(name, blocks, occupied_tiles=None, preferred_tile_x=None, search_radius=26):
     if occupied_tiles is None:
         occupied_tiles = set()
 
+    spec = ANIMAL_TYPES[name]
     candidate_columns = []
     if preferred_tile_x is not None:
         left = max(1, preferred_tile_x - search_radius)
@@ -1681,24 +1987,37 @@ def spawn_nether_piglin(blocks, occupied_tiles=None, preferred_tile_x=None, sear
             surface_y = find_nether_surface_y(tile_x, blocks)
             if surface_y is None:
                 continue
-            x = tile_x * TILE_SIZE + random.uniform(8, TILE_SIZE - ANIMAL_TYPES["Piglin"]["size"] - 8)
-            y = surface_y - ANIMAL_TYPES["Piglin"]["size"]
+            x = tile_x * TILE_SIZE + random.uniform(8, TILE_SIZE - spec["size"] - 8)
+            y = surface_y - spec["size"]
             direction = random.choice([-1, 1])
+            speed_min, speed_max = (26, 48) if name == "Piglin" else (34, 62)
             return {
-                "name": "Piglin",
-                "color": ANIMAL_TYPES["Piglin"]["color"],
-                "size": ANIMAL_TYPES["Piglin"]["size"],
+                "name": name,
+                "color": spec["color"],
+                "size": spec["size"],
                 "x": x,
                 "y": y,
-                "vx": random.uniform(26, 48) * direction,
-                "hp": ANIMAL_TYPES["Piglin"]["hp"],
+                "vx": random.uniform(speed_min, speed_max) * direction,
+                "hp": spec["hp"],
                 "facing_right": direction > 0,
             }
     return None
 
 
+def spawn_nether_piglin(blocks, occupied_tiles=None, preferred_tile_x=None, search_radius=26):
+    return spawn_nether_surface_mob("Piglin", blocks, occupied_tiles, preferred_tile_x, search_radius)
+
+
+def spawn_nether_blaze(blocks, occupied_tiles=None, preferred_tile_x=None, search_radius=24):
+    blaze = spawn_nether_surface_mob("Blaze", blocks, occupied_tiles, preferred_tile_x, search_radius)
+    if blaze is not None:
+        blaze["burning"] = True
+        blaze["aggro_timer"] = 0.0
+    return blaze
+
+
 def get_animal_ground_y(animal, world_x, blocks):
-    if animal["name"] == "Piglin":
+    if animal["name"] in {"Piglin", "Blaze"}:
         surface_y = find_nether_surface_y(int(world_x // TILE_SIZE), blocks)
         if surface_y is not None:
             return surface_y
@@ -1714,11 +2033,15 @@ def is_nighttime(time_of_day):
 
 
 def is_hostile(name):
-    return name in {"Zombie", "Skeleton"}
+    return name in {"Zombie", "Skeleton", "Enderman", "Blaze"}
 
 
 def burns_in_daylight(name):
     return name in {"Zombie", "Skeleton"}
+
+
+def causes_contact_damage(name):
+    return is_hostile(name) and name != "Skeleton"
 
 
 def get_drop_type(name):
@@ -1726,10 +2049,14 @@ def get_drop_type(name):
         return "rotten_meat"
     if name == "Skeleton":
         return "bone"
+    if name == "Enderman":
+        return "ender_pearl"
     if name == "Fish":
         return "raw_fish"
     if name == "Piglin":
         return "gold_ingot"
+    if name == "Blaze":
+        return "blaze_rod"
     return "meat"
 
 
@@ -1737,7 +2064,12 @@ def kill_animal(animal, animals, meats, respawn_queue, remove_now=True):
     drop_type = get_drop_type(animal["name"])
     if drop_type is not None:
         drop_size = max(10, animal["size"] // 2)
-        drop_count = random.randint(11, 15) if animal["name"] == "Piglin" else 1
+        if animal["name"] == "Piglin":
+            drop_count = random.randint(11, 15)
+        elif animal["name"] == "Enderman":
+            drop_count = 3
+        else:
+            drop_count = 1
         center_x = animal["x"] + (animal["size"] - drop_size) / 2
         center_y = animal["y"] + (animal["size"] - drop_size) / 2
         for _ in range(drop_count):
@@ -1828,6 +2160,20 @@ def spawn_extra_night_skeleton(animals, blocks):
     animals.append(skeleton)
 
 
+def spawn_extra_night_enderman(animals, blocks, player_x=None):
+    occupied_tiles = {int(a["x"] // TILE_SIZE) for a in animals}
+    preferred_tile_x = None if player_x is None else int((player_x + PLAYER_SIZE / 2) // TILE_SIZE)
+    enderman = spawn_animal_by_name(
+        "Enderman",
+        blocks,
+        occupied_tiles,
+        preferred_tile_x=preferred_tile_x,
+        search_radius=ENDERMAN_PLAYER_SPAWN_RADIUS,
+    )
+    if enderman is not None:
+        animals.append(enderman)
+
+
 def spawn_skeleton_arrow(animal, arrows, player_x, player_y):
     start_x = animal["x"] + animal["size"] / 2
     start_y = animal["y"] + animal["size"] / 2
@@ -1870,12 +2216,19 @@ def create_animals(blocks, count, time_of_day):
         used_tiles.add(int(animal["x"] // TILE_SIZE))
         animals.append(animal)
 
+    remaining_count = max(0, count - zombie_count - skeleton_count)
+    enderman_count = min(INITIAL_ENDERMAN_COUNT, remaining_count) if is_nighttime(time_of_day) else 0
+    for _ in range(enderman_count):
+        animal = spawn_animal_by_name("Enderman", blocks, used_tiles)
+        used_tiles.add(int(animal["x"] // TILE_SIZE))
+        animals.append(animal)
+
     passive_names = [
         name
         for name in ANIMAL_TYPES.keys()
         if not is_hostile(name) and not is_aquatic(name) and name != "Piglin"
     ]
-    for _ in range(count - zombie_count - skeleton_count):
+    for _ in range(count - zombie_count - skeleton_count - enderman_count):
         name = random.choice(passive_names)
         animal = spawn_animal_by_name(name, blocks, used_tiles)
         used_tiles.add(int(animal["x"] // TILE_SIZE))
@@ -1886,18 +2239,28 @@ def create_animals(blocks, count, time_of_day):
 def create_nether_animals(blocks, count=INITIAL_PIGLIN_COUNT):
     animals = []
     used_tiles = set()
+    preferred_tile_x = WORLD_W // 2
     for _ in range(count):
-        piglin = spawn_nether_piglin(blocks, used_tiles)
+        piglin = spawn_nether_piglin(blocks, used_tiles, preferred_tile_x)
         if piglin is None:
             break
         used_tiles.add(int(piglin["x"] // TILE_SIZE))
         animals.append(piglin)
+    for _ in range(INITIAL_BLAZE_COUNT):
+        blaze = spawn_nether_blaze(blocks, used_tiles, preferred_tile_x)
+        if blaze is None:
+            break
+        used_tiles.add(int(blaze["x"] // TILE_SIZE))
+        animals.append(blaze)
     return animals
 
 
 def update_animals(animals, blocks, dt, meats, respawn_queue, player_x, player_y, time_of_day, arrows):
     """Move animals left/right, make them jump over 1-block obstacles or bounce back."""
     world_limit = WORLD_W * TILE_SIZE
+    player_rect = pygame.Rect(math.floor(player_x), math.floor(player_y), PLAYER_SIZE, PLAYER_SIZE)
+    player_damage = 0
+    player_burn_time = 0.0
     for animal in animals:
         if is_aquatic(animal["name"]):
             animal["swim_turn_timer"] = animal.get("swim_turn_timer", 1.0) - dt
@@ -1963,6 +2326,14 @@ def update_animals(animals, blocks, dt, meats, respawn_queue, player_x, player_y
                     continue
             continue
 
+        if animal["name"] == "Enderman":
+            player_center_x = player_x + PLAYER_SIZE / 2
+            animal_center_x = animal["x"] + animal["size"] / 2
+            dist_x = player_center_x - animal_center_x
+            if abs(dist_x) < 340:
+                animal["vx"] = ENDERMAN_MOVE_SPEED * (1 if dist_x > 0 else -1)
+                animal["facing_right"] = dist_x >= 0
+
         # Gravity and jumping
         if "vy" not in animal:
             animal["vy"] = 0.0
@@ -1998,6 +2369,25 @@ def update_animals(animals, blocks, dt, meats, respawn_queue, player_x, player_y
             else:
                 animal["shoot_timer"] = max(0.0, animal.get("shoot_timer", 0.0) - dt * 2.0)
                 animal["aiming"] = False
+        elif animal["name"] == "Blaze":
+            animal["aggro_timer"] = max(0.0, animal.get("aggro_timer", 0.0) - dt)
+            if animal["aggro_timer"] > 0:
+                player_center_x = player_x + PLAYER_SIZE / 2
+                animal_center_x = animal["x"] + animal["size"] / 2
+                dist_x = player_center_x - animal_center_x
+                animal["vx"] = BLAZE_MOVE_SPEED * (1 if dist_x > 0 else -1)
+                animal["facing_right"] = dist_x >= 0
+            else:
+                update_npc_wander(
+                    animal,
+                    dt,
+                    BLAZE_MOVE_SPEED,
+                    BLAZE_WANDER_INTERVAL_MIN,
+                    BLAZE_WANDER_INTERVAL_MAX,
+                    BLAZE_IDLE_CHANCE,
+                )
+                animal["facing_right"] = animal["vx"] >= 0
+            animal["burning"] = True
         else:
             animal["burning"] = False
 
@@ -2081,9 +2471,29 @@ def update_animals(animals, blocks, dt, meats, respawn_queue, player_x, player_y
                 continue
         elif not burns_in_daylight(animal["name"]):
             animal["burning"] = False
-            
+
+        if causes_contact_damage(animal["name"]):
+            animal_rect = pygame.Rect(
+                math.floor(animal["x"]),
+                math.floor(animal["y"]),
+                animal["size"],
+                animal["size"],
+            )
+            if animal_rect.colliderect(player_rect):
+                animal["touch_attack_timer"] = animal.get("touch_attack_timer", 0.0) + dt
+                hits = int(animal["touch_attack_timer"] // HOSTILE_TOUCH_DAMAGE_INTERVAL)
+                if hits > 0:
+                    player_damage += hits * HOSTILE_TOUCH_DAMAGE
+                    animal["touch_attack_timer"] %= HOSTILE_TOUCH_DAMAGE_INTERVAL
+                if animal["name"] == "Blaze":
+                    animal["aggro_timer"] = max(animal.get("aggro_timer", 0.0), BLAZE_AGGRO_DURATION * 0.6)
+                    player_burn_time = max(player_burn_time, BLAZE_IGNITE_DURATION)
+            else:
+                animal["touch_attack_timer"] = 0.0
+
     # remove dead animals
     animals[:] = [a for a in animals if not a.get("dead")]
+    return player_damage, player_burn_time
 
 
 def draw_skeleton_archer(screen, sx, sy, size, facing_right, aiming):
@@ -2249,6 +2659,10 @@ def draw_animals(screen, animals, camera_x, camera_y, font, animal_images):
             )
         elif animal["name"] == "Piglin":
             draw_piglin(screen, sx, sy, size, animal.get("facing_right", True))
+        elif animal["name"] == "Enderman":
+            draw_enderman(screen, sx, sy, size, animal.get("facing_right", True))
+        elif animal["name"] == "Blaze":
+            draw_blaze(screen, sx, sy, size, animal.get("facing_right", True))
         else:
             img = animal_images.get(animal["name"])
             if img:
@@ -2261,7 +2675,7 @@ def draw_animals(screen, animals, camera_x, camera_y, font, animal_images):
             else:
                 pygame.draw.rect(screen, animal["color"], pygame.Rect(sx, sy, size, size))
 
-        if animal.get("burning"):
+        if animal.get("burning") or animal["name"] == "Blaze":
             flame_color = (255, 140, 40)
             pygame.draw.rect(screen, flame_color, pygame.Rect(sx + 2, sy - 4, 6, 6))
             pygame.draw.rect(screen, flame_color, pygame.Rect(sx + size - 8, sy - 4, 6, 6))
@@ -2274,7 +2688,7 @@ def draw_animals(screen, animals, camera_x, camera_y, font, animal_images):
 
 
 def attack_animal_at_crosshair(
-    animals, meats, respawn_queue, camera_x, camera_y, crosshair_x, crosshair_y, damage=1
+    animals, meats, respawn_queue, blocks, camera_x, camera_y, crosshair_x, crosshair_y, damage=1
 ):
     """Hit one animal if crosshair is on it; dead animals drop meat."""
     crosshair_world_x = camera_x + crosshair_x
@@ -2293,6 +2707,10 @@ def attack_animal_at_crosshair(
     target["hp"] -= damage
     if target["hp"] <= 0:
         kill_animal(target, animals, meats, respawn_queue)
+    elif target["name"] == "Blaze":
+        target["aggro_timer"] = BLAZE_AGGRO_DURATION
+    elif target["name"] == "Enderman" and damage >= 2 and random.random() < 0.6:
+        try_enderman_dodge(target, blocks)
     return True
 
 
@@ -2416,6 +2834,57 @@ def try_place_selected_block(
     return True
 
 
+def try_use_ender_pearl(player_x, player_y, blocks, current_dimension, camera_x, camera_y, crosshair_x, crosshair_y):
+    if current_dimension != "overworld":
+        return None, "Ender pearls only work in the Overworld."
+
+    target_world_x = camera_x + crosshair_x
+    target_world_y = camera_y + crosshair_y
+    player_center_x = player_x + PLAYER_SIZE / 2
+    player_center_y = player_y + PLAYER_SIZE / 2
+    if math.hypot(target_world_x - player_center_x, target_world_y - player_center_y) > ENDER_PEARL_TELEPORT_RANGE:
+        return None, "Target is out of range."
+
+    tile_x = int(target_world_x // TILE_SIZE)
+    tile_y = int(target_world_y // TILE_SIZE)
+    target_block = blocks.get((tile_x, tile_y))
+    candidates = []
+
+    if target_block is not None and not is_liquid_block(target_block) and not is_door_block(target_block):
+        candidates.append(
+            (
+                tile_x * TILE_SIZE + (TILE_SIZE - PLAYER_SIZE) / 2,
+                tile_y * TILE_SIZE - PLAYER_SIZE,
+            )
+        )
+    else:
+        candidates.append((target_world_x - PLAYER_SIZE / 2, target_world_y - PLAYER_SIZE / 2))
+        below_tile_y = tile_y + 1
+        below_block = blocks.get((tile_x, below_tile_y))
+        if below_block is not None and not is_liquid_block(below_block) and not is_door_block(below_block):
+            candidates.append(
+                (
+                    tile_x * TILE_SIZE + (TILE_SIZE - PLAYER_SIZE) / 2,
+                    below_tile_y * TILE_SIZE - PLAYER_SIZE,
+                )
+            )
+
+    max_x = WORLD_W * TILE_SIZE - PLAYER_SIZE
+    max_y = WORLD_H * TILE_SIZE - PLAYER_SIZE
+    for base_x, base_y in candidates:
+        for lift in (0, -TILE_SIZE, -TILE_SIZE * 2, TILE_SIZE):
+            test_x = max(0, min(base_x, max_x))
+            test_y = max(-4 * TILE_SIZE, min(base_y + lift, max_y))
+            test_rect = pygame.Rect(math.floor(test_x), math.floor(test_y), PLAYER_SIZE, PLAYER_SIZE)
+            if get_solid_block_rects(test_rect, blocks):
+                continue
+            if rect_overlaps_block_type(test_rect, blocks, "lava"):
+                continue
+            return (float(test_x), float(test_y)), ""
+
+    return None, "No safe teleport spot there."
+
+
 def update_respawns(respawn_queue, animals, blocks, dt, time_of_day, current_dimension="overworld", player_x=None):
     """Respawn each dead animal after delay, keeping infinite cycle."""
     if not respawn_queue:
@@ -2426,14 +2895,27 @@ def update_respawns(respawn_queue, animals, blocks, dt, time_of_day, current_dim
     for item in respawn_queue:
         item["time_left"] -= dt
         if item["time_left"] <= 0:
-            if is_hostile(item["name"]) and not is_nighttime(time_of_day):
+            if current_dimension == "overworld" and is_hostile(item["name"]) and not is_nighttime(time_of_day):
                 remain.append(item)
                 continue
             if item["name"] == "Piglin":
                 preferred_tile_x = None if player_x is None else int((player_x + PLAYER_SIZE / 2) // TILE_SIZE)
                 animal = spawn_nether_piglin(blocks, occupied_tiles, preferred_tile_x)
+            elif item["name"] == "Blaze":
+                preferred_tile_x = None if player_x is None else int((player_x + PLAYER_SIZE / 2) // TILE_SIZE)
+                animal = spawn_nether_blaze(blocks, occupied_tiles, preferred_tile_x)
             else:
-                animal = spawn_animal_by_name(item["name"], blocks, occupied_tiles)
+                preferred_tile_x = None if player_x is None else int((player_x + PLAYER_SIZE / 2) // TILE_SIZE)
+                if item["name"] == "Enderman":
+                    animal = spawn_animal_by_name(
+                        item["name"],
+                        blocks,
+                        occupied_tiles,
+                        preferred_tile_x=preferred_tile_x,
+                        search_radius=ENDERMAN_PLAYER_SPAWN_RADIUS,
+                    )
+                else:
+                    animal = spawn_animal_by_name(item["name"], blocks, occupied_tiles)
             if animal is None:
                 remain.append(item)
                 continue
@@ -2445,7 +2927,7 @@ def update_respawns(respawn_queue, animals, blocks, dt, time_of_day, current_dim
     respawn_queue[:] = remain
 
 
-def update_villager_respawns(villager_respawn_queue, villagers, dt):
+def update_villager_respawns(villager_respawn_queue, villagers, blocks, dt):
     if not villager_respawn_queue:
         return
 
@@ -2453,12 +2935,24 @@ def update_villager_respawns(villager_respawn_queue, villagers, dt):
     for item in villager_respawn_queue:
         item["time_left"] -= dt
         if item["time_left"] <= 0:
+            villager_rect = pygame.Rect(
+                math.floor(item["spawn_x"]),
+                math.floor(item["spawn_y"]),
+                item["size"],
+                item["size"],
+            )
+            move_rect_to_safe_ground(
+                villager_rect,
+                blocks,
+                min_x=item["home_left"],
+                max_x=item["home_right"],
+            )
             villagers.append(
                 {
-                    "x": item["spawn_x"],
-                    "y": item["spawn_y"],
-                    "spawn_x": item["spawn_x"],
-                    "spawn_y": item["spawn_y"],
+                    "x": float(villager_rect.x),
+                    "y": float(villager_rect.y),
+                    "spawn_x": float(villager_rect.x),
+                    "spawn_y": float(villager_rect.y),
                     "size": item["size"],
                     "vx": item["vx"],
                     "trade_item": item["trade_item"],
@@ -2476,7 +2970,7 @@ def update_villager_respawns(villager_respawn_queue, villagers, dt):
     villager_respawn_queue[:] = remain
 
 
-def update_iron_golem_respawns(iron_golem_respawn_queue, iron_golems, dt):
+def update_iron_golem_respawns(iron_golem_respawn_queue, iron_golems, blocks, dt):
     if not iron_golem_respawn_queue:
         return
 
@@ -2484,12 +2978,24 @@ def update_iron_golem_respawns(iron_golem_respawn_queue, iron_golems, dt):
     for item in iron_golem_respawn_queue:
         item["time_left"] -= dt
         if item["time_left"] <= 0:
+            golem_rect = pygame.Rect(
+                math.floor(item["spawn_x"]),
+                math.floor(item["spawn_y"]),
+                item["size"],
+                item["size"],
+            )
+            move_rect_to_safe_ground(
+                golem_rect,
+                blocks,
+                min_x=item["home_left"],
+                max_x=item["home_right"],
+            )
             iron_golems.append(
                 {
-                    "x": item["spawn_x"],
-                    "y": item["spawn_y"],
-                    "spawn_x": item["spawn_x"],
-                    "spawn_y": item["spawn_y"],
+                    "x": float(golem_rect.x),
+                    "y": float(golem_rect.y),
+                    "spawn_x": float(golem_rect.x),
+                    "spawn_y": float(golem_rect.y),
                     "size": item["size"],
                     "vx": item["vx"],
                     "home_left": item["home_left"],
@@ -2566,6 +3072,98 @@ def update_water(blocks):
             blocks[pos] = "water"
     resolve_liquid_interactions(blocks)
 
+
+def draw_redstone_item(screen, x, y, size):
+    draw_pixel_art(
+        screen,
+        x,
+        y,
+        size,
+        [
+            "0002000",
+            "0012200",
+            "0122220",
+            "0012200",
+            "0002000",
+            "0002000",
+            "0000000",
+        ],
+        {
+            "0": None,
+            "1": (132, 18, 18),
+            "2": REDSTONE_COLOR,
+        },
+    )
+
+
+def draw_ender_pearl_item(screen, x, y, size):
+    draw_pixel_art(
+        screen,
+        x,
+        y,
+        size,
+        [
+            "0001100",
+            "0012210",
+            "0122221",
+            "0123221",
+            "0012210",
+            "0001100",
+        ],
+        {
+            "0": None,
+            "1": (36, 150, 132),
+            "2": (92, 224, 194),
+            "3": (210, 255, 248),
+        },
+    )
+
+
+def draw_ingot_item(screen, x, y, size, light_color, mid_color, dark_color):
+    draw_pixel_art(
+        screen,
+        x,
+        y,
+        size,
+        [
+            "0000000",
+            "0011110",
+            "0122221",
+            "0123331",
+            "0011110",
+            "0000000",
+        ],
+        {
+            "0": None,
+            "1": light_color,
+            "2": mid_color,
+            "3": dark_color,
+        },
+    )
+
+
+def draw_gold_nugget_item(screen, x, y, size):
+    draw_pixel_art(
+        screen,
+        x,
+        y,
+        size,
+        [
+            "0001000",
+            "0012210",
+            "0123321",
+            "0012210",
+            "0001000",
+        ],
+        {
+            "0": None,
+            "1": (252, 226, 120),
+            "2": (242, 198, 74),
+            "3": (202, 152, 36),
+        },
+    )
+
+
 def draw_items(screen, items, camera_x, camera_y, meat_image):
     for item in items:
         sx = item["x"] - camera_x
@@ -2616,23 +3214,7 @@ def draw_items(screen, items, camera_x, camera_y, meat_image):
         elif item.get("type") == "redstone_ore":
             draw_ore_block(screen, sx, sy, size, "redstone_ore")
         elif item.get("type") == "redstone":
-            draw_pixel_art(
-                screen,
-                sx,
-                sy,
-                size,
-                [
-                    "00100",
-                    "01110",
-                    "11111",
-                    "01110",
-                    "00100",
-                ],
-                {
-                    "0": None,
-                    "1": REDSTONE_COLOR,
-                },
-            )
+            draw_redstone_item(screen, sx, sy, size)
         elif item.get("type") == "diamond":
             draw_pixel_art(
                 screen,
@@ -2665,6 +3247,8 @@ def draw_items(screen, items, camera_x, camera_y, meat_image):
             pygame.draw.rect(screen, (0, 0, 0), pygame.Rect(sx, sy, size, size), 1)
         elif item.get("type") == "iron_ingot":
             draw_inventory_icon(screen, "iron_ingot", sx, sy, size, meat_image)
+        elif item.get("type") == "gold_ingot":
+            draw_inventory_icon(screen, "gold_ingot", sx, sy, size, meat_image)
         elif item.get("type") == "gold_nugget":
             draw_inventory_icon(screen, "gold_nugget", sx, sy, size, meat_image)
         elif item.get("type") == "fire_resistance_potion":
@@ -2740,6 +3324,32 @@ def draw_items(screen, items, camera_x, camera_y, meat_image):
                     "3": RAW_FISH_COLOR,
                 },
             )
+        elif item.get("type") == "blaze_rod":
+            pixel = max(2, int(size) // 6)
+            rod_rect = pygame.Rect(int(sx + size * 0.35), int(sy + 2), pixel, max(pixel * 4, int(size - 4)))
+            pygame.draw.rect(screen, (248, 206, 86), rod_rect)
+            pygame.draw.rect(screen, (212, 132, 28), pygame.Rect(rod_rect.x, rod_rect.bottom - pixel, rod_rect.width, pixel))
+        elif item.get("type") == "blaze_powder":
+            draw_pixel_art(
+                screen,
+                sx,
+                sy,
+                size,
+                [
+                    "00100",
+                    "01110",
+                    "11211",
+                    "01110",
+                    "00100",
+                ],
+                {
+                    "0": None,
+                    "1": (255, 212, 76),
+                    "2": (255, 148, 38),
+                },
+            )
+        elif item.get("type") == "ender_pearl":
+            draw_ender_pearl_item(screen, sx, sy, size)
         else:
             if meat_image:
                 # 缩放肉图片到实际 drop_size
@@ -2807,6 +3417,38 @@ def draw_inventory_icon(screen, item_type, x, y, size, meat_image):
         pixel = max(2, size // 8)
         pygame.draw.rect(screen, STICK_COLOR, pygame.Rect(x + size // 2 - pixel // 2, y + 4, pixel, size - 8))
         pygame.draw.rect(screen, (96, 72, 38), pygame.Rect(x + size // 2 - pixel, y + size // 2 - pixel // 2, pixel * 2, pixel))
+        return
+
+    if item_type == "blaze_rod":
+        pixel = max(2, size // 8)
+        rod_rect = pygame.Rect(x + size // 2 - pixel // 2, y + 3, pixel, size - 6)
+        pygame.draw.rect(screen, (248, 206, 86), rod_rect)
+        pygame.draw.rect(screen, (212, 132, 28), pygame.Rect(rod_rect.x, rod_rect.bottom - pixel, rod_rect.width, pixel))
+        return
+
+    if item_type == "blaze_powder":
+        draw_pixel_art(
+            screen,
+            x,
+            y,
+            size,
+            [
+                "00100",
+                "01110",
+                "11211",
+                "01110",
+                "00100",
+            ],
+            {
+                "0": None,
+                "1": (255, 212, 76),
+                "2": (255, 148, 38),
+            },
+        )
+        return
+
+    if item_type == "ender_pearl":
+        draw_ender_pearl_item(screen, x, y, size)
         return
 
     if item_type == "raw_fish":
@@ -2926,65 +3568,31 @@ def draw_inventory_icon(screen, item_type, x, y, size, meat_image):
         return
 
     if item_type == "iron_ingot":
-        draw_pixel_art(
+        draw_ingot_item(
             screen,
             x,
             y,
             size,
-            [
-                "00000",
-                "01110",
-                "12221",
-                "01110",
-                "00000",
-            ],
-            {
-                "0": None,
-                "1": (230, 230, 230),
-                "2": (185, 185, 185),
-            },
+            (246, 246, 246),
+            (210, 210, 214),
+            (164, 164, 170),
         )
         return
 
     if item_type == "gold_ingot":
-        draw_pixel_art(
+        draw_ingot_item(
             screen,
             x,
             y,
             size,
-            [
-                "00000",
-                "01110",
-                "12221",
-                "01110",
-                "00000",
-            ],
-            {
-                "0": None,
-                "1": (244, 214, 92),
-                "2": (210, 170, 40),
-            },
+            (255, 236, 132),
+            (246, 198, 78),
+            (198, 144, 34),
         )
         return
 
     if item_type == "gold_nugget":
-        draw_pixel_art(
-            screen,
-            x,
-            y,
-            size,
-            [
-                "00000",
-                "00110",
-                "01111",
-                "01110",
-                "00100",
-            ],
-            {
-                "0": None,
-                "1": (248, 214, 92),
-            },
-        )
+        draw_gold_nugget_item(screen, x, y, size)
         return
 
     if item_type == "fire_resistance_potion":
@@ -2997,23 +3605,7 @@ def draw_inventory_icon(screen, item_type, x, y, size, meat_image):
         return
 
     if item_type == "redstone":
-        draw_pixel_art(
-            screen,
-            x,
-            y,
-            size,
-            [
-                "00100",
-                "01110",
-                "11111",
-                "01110",
-                "00100",
-            ],
-            {
-                "0": None,
-                "1": REDSTONE_COLOR,
-            },
-        )
+        draw_redstone_item(screen, x, y, size)
         return
 
     if item_type == "diamond":
@@ -3236,6 +3828,9 @@ def get_selected_item_type(
     obsidian_count,
     redstone_block_count,
     stick_count,
+    blaze_rod_count,
+    blaze_powder_count,
+    ender_pearl_count,
     has_wood_pickaxe,
     has_stone_pickaxe,
     has_iron_pickaxe,
@@ -3270,6 +3865,9 @@ def get_selected_item_type(
         obsidian_count,
         redstone_block_count,
         stick_count,
+        blaze_rod_count,
+        blaze_powder_count,
+        ender_pearl_count,
         has_wood_pickaxe,
         has_stone_pickaxe,
         has_iron_pickaxe,
@@ -3420,6 +4018,9 @@ def build_inventory_slots(
     obsidian_count,
     redstone_block_count,
     stick_count,
+    blaze_rod_count,
+    blaze_powder_count,
+    ender_pearl_count,
     has_wood_pickaxe,
     has_stone_pickaxe,
     has_iron_pickaxe,
@@ -3451,6 +4052,9 @@ def build_inventory_slots(
         ("redstone_block", redstone_block_count),
         ("obsidian", obsidian_count),
         ("stick", stick_count),
+        ("blaze_rod", blaze_rod_count),
+        ("blaze_powder", blaze_powder_count),
+        ("ender_pearl", ender_pearl_count),
         ("meat", meat_count),
         ("raw_fish", raw_fish_count),
         ("rotten_meat", rotten_meat_count),
@@ -3511,6 +4115,9 @@ def find_inventory_slot_index(
     obsidian_count,
     redstone_block_count,
     stick_count,
+    blaze_rod_count,
+    blaze_powder_count,
+    ender_pearl_count,
     has_wood_pickaxe,
     has_stone_pickaxe,
     has_iron_pickaxe,
@@ -3545,6 +4152,9 @@ def find_inventory_slot_index(
         obsidian_count,
         redstone_block_count,
         stick_count,
+        blaze_rod_count,
+        blaze_powder_count,
+        ender_pearl_count,
         has_wood_pickaxe,
         has_stone_pickaxe,
         has_iron_pickaxe,
@@ -3586,6 +4196,9 @@ def get_selected_inventory_entry(
     obsidian_count,
     redstone_block_count,
     stick_count,
+    blaze_rod_count,
+    blaze_powder_count,
+    ender_pearl_count,
     has_wood_pickaxe,
     has_stone_pickaxe,
     has_iron_pickaxe,
@@ -3620,6 +4233,9 @@ def get_selected_inventory_entry(
         obsidian_count,
         redstone_block_count,
         stick_count,
+        blaze_rod_count,
+        blaze_powder_count,
+        ender_pearl_count,
         has_wood_pickaxe,
         has_stone_pickaxe,
         has_iron_pickaxe,
@@ -3660,6 +4276,9 @@ def damage_selected_pickaxe(
     obsidian_count,
     redstone_block_count,
     stick_count,
+    blaze_rod_count,
+    blaze_powder_count,
+    ender_pearl_count,
     has_wood_pickaxe,
     has_stone_pickaxe,
     has_iron_pickaxe,
@@ -3695,6 +4314,9 @@ def damage_selected_pickaxe(
         obsidian_count,
         redstone_block_count,
         stick_count,
+        blaze_rod_count,
+        blaze_powder_count,
+        ender_pearl_count,
         has_wood_pickaxe,
         has_stone_pickaxe,
         has_iron_pickaxe,
@@ -3756,6 +4378,9 @@ def draw_hotbar(
     obsidian_count,
     redstone_block_count,
     stick_count,
+    blaze_rod_count,
+    blaze_powder_count,
+    ender_pearl_count,
     has_wood_pickaxe,
     has_stone_pickaxe,
     has_iron_pickaxe,
@@ -3791,27 +4416,31 @@ def draw_hotbar(
         obsidian_count,
         redstone_block_count,
         stick_count,
+        blaze_rod_count,
+        blaze_powder_count,
+        ender_pearl_count,
         has_wood_pickaxe,
         has_stone_pickaxe,
         has_iron_pickaxe,
         has_gold_pickaxe,
         has_diamond_pickaxe,
         has_redstone_pickaxe,
-    )[:VISIBLE_HOTBAR_SLOTS]
+    )
     slot_size = 42
     gap = 4
-    total_width = len(slots) * slot_size + (len(slots) - 1) * gap
+    total_width = VISIBLE_HOTBAR_SLOTS * slot_size + (VISIBLE_HOTBAR_SLOTS - 1) * gap
     start_x = (WIDTH - total_width) // 2
     y = HEIGHT - 54
 
-    for index, slot_info in enumerate(slots):
-        item_type = slot_info["item_type"]
-        count = slot_info["count"]
+    for index in range(VISIBLE_HOTBAR_SLOTS):
         slot = pygame.Rect(start_x + index * (slot_size + gap), y, slot_size, slot_size)
         border = (240, 240, 240) if index == selected_index else (124, 124, 124)
         pygame.draw.rect(screen, (48, 48, 48), slot)
         pygame.draw.rect(screen, border, slot, 3 if index == selected_index else 2)
-        if count > 0:
+        if index < len(slots):
+            slot_info = slots[index]
+            item_type = slot_info["item_type"]
+            count = slot_info["count"]
             draw_inventory_icon(screen, item_type, slot.x + 9, slot.y + 9, 24, meat_image)
             if "durability" in slot_info:
                 durability_ratio = slot_info["durability"] / max(1, slot_info["max_durability"])
@@ -3830,7 +4459,7 @@ def draw_hotbar(
         key_text = font.render(get_hotbar_key_label(index), True, (210, 210, 210))
         screen.blit(key_text, (slot.x + 4, slot.y + 2))
 
-    hint = font.render("Hotbar 1-9  K:Backpack  F:Food  G:Rotten  E:Craft/Trade", True, (230, 230, 230))
+    hint = font.render("Hotbar 1-9  K:Open extra slots  F:Food  G:Rotten  E:Craft/Trade", True, (230, 230, 230))
     hint_rect = hint.get_rect(center=(WIDTH // 2, y - 12))
     screen.blit(hint, hint_rect)
 
@@ -3865,6 +4494,9 @@ def draw_backpack_panel(
     obsidian_count,
     redstone_block_count,
     stick_count,
+    blaze_rod_count,
+    blaze_powder_count,
+    ender_pearl_count,
     has_wood_pickaxe,
     has_stone_pickaxe,
     has_iron_pickaxe,
@@ -3900,6 +4532,9 @@ def draw_backpack_panel(
         obsidian_count,
         redstone_block_count,
         stick_count,
+        blaze_rod_count,
+        blaze_powder_count,
+        ender_pearl_count,
         has_wood_pickaxe,
         has_stone_pickaxe,
         has_iron_pickaxe,
@@ -3907,28 +4542,24 @@ def draw_backpack_panel(
         has_diamond_pickaxe,
         has_redstone_pickaxe,
     )
-    if not slots:
-        return
-
-    panel = pygame.Rect(52, 72, WIDTH - 104, 236)
+    slot_size = 42
+    gap = 4
+    columns = 6
+    rows = 2
+    total_width = columns * slot_size + (columns - 1) * gap
+    total_height = rows * slot_size + (rows - 1) * gap
+    start_x = (WIDTH - total_width) // 2
+    hotbar_y = HEIGHT - 54
+    start_y = hotbar_y - total_height - 16
+    panel = pygame.Rect(start_x - 12, start_y - 30, total_width + 24, total_height + 40)
     pygame.draw.rect(screen, (34, 34, 34), panel)
     pygame.draw.rect(screen, (132, 132, 132), panel, 2)
 
-    title = font.render("Inventory  K to close", True, (240, 240, 240))
-    screen.blit(title, (panel.x + 12, panel.y + 10))
-    subtitle = font.render("Shows all items, not only the hidden slots.", True, (190, 190, 190))
-    screen.blit(subtitle, (panel.x + 12, panel.y + 28))
+    title = font.render("Extra slots  K to close", True, (240, 240, 240))
+    screen.blit(title, (panel.x + 12, panel.y + 8))
 
-    slot_size = 42
-    gap = 6
-    columns = 5
-    start_x = panel.x + 16
-    start_y = panel.y + 54
-
-    for offset, slot_info in enumerate(slots):
-        item_type = slot_info["item_type"]
-        count = slot_info["count"]
-        index = offset
+    for offset in range(BACKPACK_SLOT_COUNT):
+        index = VISIBLE_HOTBAR_SLOTS + offset
         col = offset % columns
         row = offset // columns
         slot = pygame.Rect(
@@ -3940,7 +4571,10 @@ def draw_backpack_panel(
         border = (240, 240, 240) if index == selected_index else (124, 124, 124)
         pygame.draw.rect(screen, (48, 48, 48), slot)
         pygame.draw.rect(screen, border, slot, 3 if index == selected_index else 2)
-        if count > 0:
+        if index < len(slots):
+            slot_info = slots[index]
+            item_type = slot_info["item_type"]
+            count = slot_info["count"]
             draw_inventory_icon(screen, item_type, slot.x + 9, slot.y + 9, 24, meat_image)
             if "durability" in slot_info:
                 durability_ratio = slot_info["durability"] / max(1, slot_info["max_durability"])
@@ -3956,27 +4590,29 @@ def draw_backpack_panel(
                 count_text = font.render(str(count), True, WHITE)
                 text_rect = count_text.get_rect(bottomright=(slot.right - 4, slot.bottom - 2))
                 screen.blit(count_text, text_rect)
-        key_text = font.render(get_hotbar_key_label(index), True, (210, 210, 210))
-        screen.blit(key_text, (slot.x + 4, slot.y + 2))
 
 
 def get_backpack_panel_slot_at_pos(mouse_pos, slot_count):
-    if slot_count <= 0:
-        return None
-
-    panel = pygame.Rect(52, 72, WIDTH - 104, 236)
-    if not panel.collidepoint(mouse_pos):
+    if slot_count <= VISIBLE_HOTBAR_SLOTS:
         return None
 
     slot_size = 42
-    gap = 6
-    columns = 5
-    start_x = panel.x + 16
-    start_y = panel.y + 54
+    gap = 4
+    columns = 6
+    rows = 2
+    total_width = columns * slot_size + (columns - 1) * gap
+    total_height = rows * slot_size + (rows - 1) * gap
+    start_x = (WIDTH - total_width) // 2
+    hotbar_y = HEIGHT - 54
+    start_y = hotbar_y - total_height - 16
+    panel = pygame.Rect(start_x - 12, start_y - 30, total_width + 24, total_height + 40)
+    if not panel.collidepoint(mouse_pos):
+        return None
 
-    for index in range(slot_count):
-        col = index % columns
-        row = index // columns
+    visible_extra_slots = min(BACKPACK_SLOT_COUNT, max(0, slot_count - VISIBLE_HOTBAR_SLOTS))
+    for offset in range(visible_extra_slots):
+        col = offset % columns
+        row = offset // columns
         slot = pygame.Rect(
             start_x + col * (slot_size + gap),
             start_y + row * (slot_size + gap),
@@ -3984,7 +4620,7 @@ def get_backpack_panel_slot_at_pos(mouse_pos, slot_count):
             slot_size,
         )
         if slot.collidepoint(mouse_pos):
-            return index
+            return VISIBLE_HOTBAR_SLOTS + offset
     return -1
 
 
@@ -4091,6 +4727,9 @@ def pickup_items(player_x, player_y, items):
     collected_raw_fish = 0
     collected_rotten_meat = 0
     collected_bone = 0
+    collected_blaze_rod = 0
+    collected_blaze_powder = 0
+    collected_ender_pearl = 0
     collected_diamond = 0
     collected_wood = 0
     collected_plank = 0
@@ -4120,6 +4759,12 @@ def pickup_items(player_x, player_y, items):
                 collected_rotten_meat += 1
             elif item["type"] == "bone":
                 collected_bone += 1
+            elif item["type"] == "blaze_rod":
+                collected_blaze_rod += 1
+            elif item["type"] == "blaze_powder":
+                collected_blaze_powder += 1
+            elif item["type"] == "ender_pearl":
+                collected_ender_pearl += 1
             elif item["type"] == "diamond":
                 collected_diamond += 1
             elif item["type"] == "wood":
@@ -4159,18 +4804,59 @@ def pickup_items(player_x, player_y, items):
         else:
             remain.append(item)
 
-    return remain, collected_meat, collected_raw_fish, collected_rotten_meat, collected_bone, collected_diamond, collected_wood, collected_plank, collected_stone, collected_sand, collected_gravel, collected_coal, collected_iron, collected_iron_ingot, collected_gold, collected_gold_ingot, collected_gold_nugget, collected_fire_resistance_potion, collected_redstone, collected_dirt, collected_obsidian, collected_diamond_block, collected_redstone_block
+    return remain, collected_meat, collected_raw_fish, collected_rotten_meat, collected_bone, collected_blaze_rod, collected_blaze_powder, collected_ender_pearl, collected_diamond, collected_wood, collected_plank, collected_stone, collected_sand, collected_gravel, collected_coal, collected_iron, collected_iron_ingot, collected_gold, collected_gold_ingot, collected_gold_nugget, collected_fire_resistance_potion, collected_redstone, collected_dirt, collected_obsidian, collected_diamond_block, collected_redstone_block
 
 
 def respawn_player(blocks, current_dimension="overworld"):
     spawn_x_tile = WORLD_W // 2
     if current_dimension == "nether":
-        spawn_surface_y = WORLD_H // 2
+        preferred_tile = find_preferred_nether_spawn_tile(spawn_x_tile, blocks)
+        candidate_tiles = [preferred_tile]
+        for offset in range(1, 13):
+            if preferred_tile - offset >= 1:
+                candidate_tiles.append(preferred_tile - offset)
+            if preferred_tile + offset <= WORLD_W - 2:
+                candidate_tiles.append(preferred_tile + offset)
+
+        player_rect = None
+        for tile_x in candidate_tiles:
+            surface_y = find_nether_surface_y(tile_x, blocks)
+            if surface_y is None:
+                continue
+            spawn_center_x = tile_x * TILE_SIZE + TILE_SIZE / 2
+            candidate_rect = pygame.Rect(
+                math.floor(spawn_center_x - PLAYER_SIZE / 2),
+                math.floor(surface_y - PLAYER_SIZE),
+                PLAYER_SIZE,
+                PLAYER_SIZE,
+            )
+            if not get_solid_block_rects(candidate_rect, blocks):
+                player_rect = candidate_rect
+                break
+            adjusted_rect = candidate_rect.copy()
+            if resolve_rect_out_of_solids(adjusted_rect, blocks):
+                player_rect = adjusted_rect
+                break
+
+        if player_rect is None:
+            spawn_center_x = spawn_x_tile * TILE_SIZE + TILE_SIZE / 2
+            player_rect = pygame.Rect(
+                math.floor(spawn_center_x - PLAYER_SIZE / 2),
+                WORLD_H - 10 * TILE_SIZE,
+                PLAYER_SIZE,
+                PLAYER_SIZE,
+            )
     else:
-        spawn_surface_y = ground_top_y_for_x(spawn_x_tile * TILE_SIZE, blocks) // TILE_SIZE
-    player_x = spawn_x_tile * TILE_SIZE + (TILE_SIZE - PLAYER_SIZE) / 2
-    player_y = (spawn_surface_y - 1) * TILE_SIZE + (TILE_SIZE - PLAYER_SIZE) / 2
-    return player_x, player_y
+        spawn_center_x = spawn_x_tile * TILE_SIZE + TILE_SIZE / 2
+        player_rect = pygame.Rect(
+            math.floor(spawn_center_x - PLAYER_SIZE / 2),
+            0,
+            PLAYER_SIZE,
+            PLAYER_SIZE,
+        )
+    if current_dimension != "nether" and not move_rect_to_safe_ground(player_rect, blocks, max_horizontal_shift=TILE_SIZE * 10):
+        resolve_rect_out_of_solids(player_rect, blocks)
+    return float(player_rect.x), float(player_rect.y)
 
 
 def main():
@@ -4224,6 +4910,9 @@ def main():
     obsidian_count = 0
     redstone_block_count = 0
     stick_count = 0
+    blaze_rod_count = 0
+    blaze_powder_count = 0
+    ender_pearl_count = 0
     dirt_count = 0
     workbench = None
     furnace = None
@@ -4239,6 +4928,7 @@ def main():
     backpack_open = False
     player_hp = 10.0       # Max HP is 10 (hearts)
     player_fire_damage_timer = 0.0
+    player_burn_timer = 0.0
     starvation_timer = 0.0
 
     # Spawn near the ground surface so sky/ground layers are visible immediately.
@@ -4253,7 +4943,10 @@ def main():
     attack_cooldown_timer = 0.0
     night_spawn_timer = 0.0
     nether_piglin_spawn_timer = 0.0
+    nether_blaze_spawn_timer = 0.0
     portal_teleport_cooldown = 0.0
+    was_nighttime = is_nighttime(time_of_day)
+    current_enderman_night_target = random.randint(NIGHT_ENDERMAN_MIN_TARGET, NIGHT_ENDERMAN_MAX_TARGET)
 
     overworld_blocks = blocks
     overworld_tree_blocks = tree_blocks
@@ -4314,6 +5007,9 @@ def main():
         obsidian_count,
         redstone_block_count,
         stick_count,
+        blaze_rod_count,
+        blaze_powder_count,
+        ender_pearl_count,
         has_wood_pickaxe,
         has_stone_pickaxe,
         has_iron_pickaxe,
@@ -4349,41 +5045,47 @@ def main():
                 if is_down:
                     if key == pygame.K_k or sc == SC_K:
                         backpack_open = not backpack_open
-                    hotbar_slot_count = len(
-                        build_inventory_slots(
-                            meat_count,
-                            raw_fish_count,
-                            rotten_meat_count,
-                            bone_count,
-                            wood_count,
-                            plank_count,
-                            stone_count,
-                            sand_count,
-                            gravel_count,
-                            dirt_count,
-                            coal_count,
-                            iron_count,
-                            gold_count,
-                            iron_ingot_count,
-                            lighter_count,
-                            gold_ingot_count,
-                            gold_nugget_count,
-                            fire_resistance_potion_count,
-                            redstone_count,
-                            diamond_count,
-                            iron_sword_count,
-                            diamond_sword_count,
-                            diamond_block_count,
-                            obsidian_count,
-                            redstone_block_count,
-                            stick_count,
-                            has_wood_pickaxe,
-                            has_stone_pickaxe,
-                            has_iron_pickaxe,
-                            has_gold_pickaxe,
-                            has_diamond_pickaxe,
-                        has_redstone_pickaxe,
-                        )
+                    hotbar_slot_count = max(
+                        VISIBLE_HOTBAR_SLOTS,
+                        len(
+                            build_inventory_slots(
+                                meat_count,
+                                raw_fish_count,
+                                rotten_meat_count,
+                                bone_count,
+                                wood_count,
+                                plank_count,
+                                stone_count,
+                                sand_count,
+                                gravel_count,
+                                dirt_count,
+                                coal_count,
+                                iron_count,
+                                gold_count,
+                                iron_ingot_count,
+                                lighter_count,
+                                gold_ingot_count,
+                                gold_nugget_count,
+                                fire_resistance_potion_count,
+                                redstone_count,
+                                diamond_count,
+                                iron_sword_count,
+                                diamond_sword_count,
+                                diamond_block_count,
+                                obsidian_count,
+                                redstone_block_count,
+                                stick_count,
+                                blaze_rod_count,
+                                blaze_powder_count,
+                                ender_pearl_count,
+                                has_wood_pickaxe,
+                                has_stone_pickaxe,
+                                has_iron_pickaxe,
+                                has_gold_pickaxe,
+                                has_diamond_pickaxe,
+                                has_redstone_pickaxe,
+                            )
+                        ),
                     )
                     hotbar_index = get_hotbar_index_for_key(key, hotbar_slot_count)
                     if hotbar_index is not None:
@@ -4416,6 +5118,9 @@ def main():
                             obsidian_count,
                             redstone_block_count,
                             stick_count,
+                            blaze_rod_count,
+                            blaze_powder_count,
+                            ender_pearl_count,
                             has_wood_pickaxe,
                             has_stone_pickaxe,
                             has_iron_pickaxe,
@@ -4492,6 +5197,9 @@ def main():
                         obsidian_count,
                         redstone_block_count,
                         stick_count,
+                        blaze_rod_count,
+                        blaze_powder_count,
+                        ender_pearl_count,
                         has_wood_pickaxe,
                         has_stone_pickaxe,
                         has_iron_pickaxe,
@@ -4499,7 +5207,58 @@ def main():
                         has_diamond_pickaxe,
                     has_redstone_pickaxe,
                     )
-                    if selected_item_type == "diamond_block" and diamond_block_count > 0:
+                    nearby_villager = find_nearby_villager(player_x, player_y, villagers)
+                    nearby_piglin = find_nearby_piglin(player_x, player_y, animals)
+                    if nearby_villager is not None:
+                        if diamond_count >= nearby_villager["trade_cost"]:
+                            diamond_count -= nearby_villager["trade_cost"]
+                            if nearby_villager["trade_item"] == "iron_sword":
+                                iron_sword_count += 1
+                                selected_hotbar_index = find_inventory_slot_index(
+                                    "iron_sword",
+                                    meat_count, raw_fish_count, rotten_meat_count, bone_count,
+                                    wood_count, plank_count, stone_count, sand_count, gravel_count, dirt_count, coal_count,
+                                    iron_count, gold_count, iron_ingot_count, lighter_count, gold_ingot_count, gold_nugget_count,
+                                    fire_resistance_potion_count,
+                                    redstone_count,
+                                    diamond_count, iron_sword_count, diamond_sword_count,
+                                    diamond_block_count, obsidian_count, redstone_block_count, stick_count, blaze_rod_count, blaze_powder_count, ender_pearl_count, has_wood_pickaxe,
+                                    has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
+                                    has_redstone_pickaxe,
+                                )
+                            elif nearby_villager["trade_item"] == "diamond_sword":
+                                diamond_sword_count += 1
+                                selected_hotbar_index = find_inventory_slot_index(
+                                    "diamond_sword",
+                                    meat_count, raw_fish_count, rotten_meat_count, bone_count,
+                                    wood_count, plank_count, stone_count, sand_count, gravel_count, dirt_count, coal_count,
+                                    iron_count, gold_count, iron_ingot_count, lighter_count, gold_ingot_count, gold_nugget_count,
+                                    fire_resistance_potion_count,
+                                    redstone_count,
+                                    diamond_count, iron_sword_count, diamond_sword_count,
+                                    diamond_block_count, obsidian_count, redstone_block_count, stick_count, blaze_rod_count, blaze_powder_count, ender_pearl_count, has_wood_pickaxe,
+                                    has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
+                                    has_redstone_pickaxe,
+                                )
+                            elif nearby_villager["trade_item"] == "diamond_block":
+                                diamond_block_count += 1
+                                selected_hotbar_index = find_inventory_slot_index(
+                                    "diamond_block",
+                                    meat_count, raw_fish_count, rotten_meat_count, bone_count,
+                                    wood_count, plank_count, stone_count, sand_count, gravel_count, dirt_count, coal_count,
+                                    iron_count, gold_count, iron_ingot_count, lighter_count, gold_ingot_count, gold_nugget_count,
+                                    fire_resistance_potion_count,
+                                    redstone_count,
+                                    diamond_count, iron_sword_count, diamond_sword_count,
+                                    diamond_block_count, obsidian_count, redstone_block_count, stick_count, blaze_rod_count, blaze_powder_count, ender_pearl_count, has_wood_pickaxe,
+                                    has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
+                                    has_redstone_pickaxe,
+                                )
+                            craft_message = f"Traded {nearby_villager['trade_cost']} diamonds for {nearby_villager['trade_label']}."
+                        else:
+                            craft_message = f"Need {nearby_villager['trade_cost']} diamonds for {nearby_villager['trade_label']}."
+                        craft_message_timer = 1.8
+                    elif selected_item_type == "diamond_block" and diamond_block_count > 0:
                         if try_place_selected_block(
                             blocks,
                             tree_blocks,
@@ -4520,7 +5279,7 @@ def main():
                                 fire_resistance_potion_count,
                                 redstone_count,
                                 diamond_count, iron_sword_count, diamond_sword_count,
-                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, has_wood_pickaxe,
+                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, blaze_rod_count, blaze_powder_count, ender_pearl_count, has_wood_pickaxe,
                                 has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
                                 has_redstone_pickaxe,
                             )
@@ -4550,7 +5309,7 @@ def main():
                                 fire_resistance_potion_count,
                                 redstone_count,
                                 diamond_count, iron_sword_count, diamond_sword_count,
-                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, has_wood_pickaxe,
+                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, blaze_rod_count, blaze_powder_count, ender_pearl_count, has_wood_pickaxe,
                                 has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
                                 has_redstone_pickaxe,
                             )
@@ -4579,7 +5338,7 @@ def main():
                                 iron_count, gold_count, iron_ingot_count, lighter_count, gold_ingot_count, gold_nugget_count,
                                 fire_resistance_potion_count,
                                 redstone_count, diamond_count, iron_sword_count, diamond_sword_count,
-                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, has_wood_pickaxe,
+                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, blaze_rod_count, blaze_powder_count, ender_pearl_count, has_wood_pickaxe,
                                 has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
                                 has_redstone_pickaxe,
                             )
@@ -4587,9 +5346,7 @@ def main():
                         else:
                             craft_message = "Aim at a nearby block surface to place it."
                         craft_message_timer = 1.2
-                    nearby_villager = find_nearby_villager(player_x, player_y, villagers)
-                    nearby_piglin = find_nearby_piglin(player_x, player_y, animals)
-                    if selected_item_type == "lighter":
+                    elif selected_item_type == "lighter":
                         placed_fire_pos = try_place_selected_block(
                             blocks,
                             tree_blocks,
@@ -4623,7 +5380,7 @@ def main():
                                 iron_count, gold_count, iron_ingot_count, lighter_count, gold_ingot_count, gold_nugget_count,
                                 fire_resistance_potion_count,
                                 redstone_count, diamond_count, iron_sword_count, diamond_sword_count,
-                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, has_wood_pickaxe,
+                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, blaze_rod_count, blaze_powder_count, ender_pearl_count, has_wood_pickaxe,
                                 has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
                                 has_redstone_pickaxe,
                             )
@@ -4653,7 +5410,7 @@ def main():
                                 fire_resistance_potion_count,
                                 redstone_count,
                                 diamond_count, iron_sword_count, diamond_sword_count,
-                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, has_wood_pickaxe,
+                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, blaze_rod_count, blaze_powder_count, ender_pearl_count, has_wood_pickaxe,
                                 has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
                             has_redstone_pickaxe,
                             )
@@ -4687,7 +5444,7 @@ def main():
                                 fire_resistance_potion_count,
                                 redstone_count,
                                 diamond_count, iron_sword_count, diamond_sword_count,
-                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, has_wood_pickaxe,
+                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, blaze_rod_count, blaze_powder_count, ender_pearl_count, has_wood_pickaxe,
                                 has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
                                 has_redstone_pickaxe,
                             )
@@ -4711,7 +5468,7 @@ def main():
                                 fire_resistance_potion_count,
                                 redstone_count,
                                 diamond_count, iron_sword_count, diamond_sword_count,
-                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, has_wood_pickaxe,
+                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, blaze_rod_count, blaze_powder_count, ender_pearl_count, has_wood_pickaxe,
                                 has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
                                 has_redstone_pickaxe,
                             )
@@ -4719,6 +5476,26 @@ def main():
                             craft_message_timer = 1.4
                         else:
                             craft_message = "Need 3 gold nuggets."
+                            craft_message_timer = 1.2
+                    elif selected_item_type == "blaze_rod":
+                        if blaze_rod_count >= 1:
+                            blaze_rod_count -= 1
+                            blaze_powder_count += 3
+                            selected_hotbar_index = find_inventory_slot_index(
+                                "blaze_powder",
+                                meat_count, raw_fish_count, rotten_meat_count, bone_count,
+                                wood_count, plank_count, stone_count, sand_count, gravel_count, dirt_count, coal_count,
+                                iron_count, gold_count, iron_ingot_count, lighter_count, gold_ingot_count, gold_nugget_count,
+                                fire_resistance_potion_count,
+                                redstone_count, diamond_count, iron_sword_count, diamond_sword_count,
+                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, blaze_rod_count, blaze_powder_count, ender_pearl_count, has_wood_pickaxe,
+                                has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
+                                has_redstone_pickaxe,
+                            )
+                            craft_message = "Crafted 3 blaze powder from 1 blaze rod."
+                            craft_message_timer = 1.4
+                        else:
+                            craft_message = "Need 1 blaze rod."
                             craft_message_timer = 1.2
                     elif selected_item_type == "redstone" and redstone_count >= 9:
                         redstone_count -= 9
@@ -4730,7 +5507,7 @@ def main():
                             iron_count, gold_count, iron_ingot_count, lighter_count, gold_ingot_count, gold_nugget_count,
                             fire_resistance_potion_count,
                             redstone_count, diamond_count, iron_sword_count, diamond_sword_count,
-                            diamond_block_count, obsidian_count, redstone_block_count, stick_count, has_wood_pickaxe,
+                            diamond_block_count, obsidian_count, redstone_block_count, stick_count, blaze_rod_count, blaze_powder_count, ender_pearl_count, has_wood_pickaxe,
                             has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
                             has_redstone_pickaxe,
                         )
@@ -4756,7 +5533,7 @@ def main():
                                 iron_count, gold_count, iron_ingot_count, lighter_count, gold_ingot_count, gold_nugget_count,
                                 fire_resistance_potion_count,
                                 redstone_count, diamond_count, iron_sword_count, diamond_sword_count,
-                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, has_wood_pickaxe,
+                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, blaze_rod_count, blaze_powder_count, ender_pearl_count, has_wood_pickaxe,
                                 has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
                                 has_redstone_pickaxe,
                             )
@@ -4783,7 +5560,7 @@ def main():
                                 fire_resistance_potion_count,
                                 redstone_count,
                                 diamond_count, iron_sword_count, diamond_sword_count,
-                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, has_wood_pickaxe,
+                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, blaze_rod_count, blaze_powder_count, ender_pearl_count, has_wood_pickaxe,
                                 has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
                             has_redstone_pickaxe,
                             )
@@ -4820,7 +5597,7 @@ def main():
                             fire_resistance_potion_count,
                             redstone_count,
                             diamond_count, iron_sword_count, diamond_sword_count,
-                            diamond_block_count, obsidian_count, redstone_block_count, stick_count, has_wood_pickaxe,
+                            diamond_block_count, obsidian_count, redstone_block_count, stick_count, blaze_rod_count, blaze_powder_count, ender_pearl_count, has_wood_pickaxe,
                             has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
                         has_redstone_pickaxe,
                         )
@@ -4846,7 +5623,7 @@ def main():
                             fire_resistance_potion_count,
                             redstone_count,
                             diamond_count, iron_sword_count, diamond_sword_count,
-                            diamond_block_count, obsidian_count, redstone_block_count, stick_count, has_wood_pickaxe,
+                            diamond_block_count, obsidian_count, redstone_block_count, stick_count, blaze_rod_count, blaze_powder_count, ender_pearl_count, has_wood_pickaxe,
                             has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
                         has_redstone_pickaxe,
                         )
@@ -4887,7 +5664,7 @@ def main():
                                     fire_resistance_potion_count,
                                     redstone_count,
                                     diamond_count, iron_sword_count, diamond_sword_count,
-                                    diamond_block_count, obsidian_count, redstone_block_count, stick_count, has_wood_pickaxe,
+                                    diamond_block_count, obsidian_count, redstone_block_count, stick_count, blaze_rod_count, blaze_powder_count, ender_pearl_count, has_wood_pickaxe,
                                     has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
                                 has_redstone_pickaxe,
                                 )
@@ -4923,7 +5700,7 @@ def main():
                                     fire_resistance_potion_count,
                                     redstone_count,
                                     diamond_count, iron_sword_count, diamond_sword_count,
-                                    diamond_block_count, obsidian_count, redstone_block_count, stick_count, has_wood_pickaxe,
+                                    diamond_block_count, obsidian_count, redstone_block_count, stick_count, blaze_rod_count, blaze_powder_count, ender_pearl_count, has_wood_pickaxe,
                                     has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
                                 has_redstone_pickaxe,
                                 )
@@ -4968,7 +5745,7 @@ def main():
                                 fire_resistance_potion_count,
                                 redstone_count,
                                 diamond_count, iron_sword_count, diamond_sword_count,
-                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, has_wood_pickaxe,
+                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, blaze_rod_count, blaze_powder_count, ender_pearl_count, has_wood_pickaxe,
                                 has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
                             has_redstone_pickaxe,
                             )
@@ -4991,7 +5768,7 @@ def main():
                                 fire_resistance_potion_count,
                                 redstone_count,
                                 diamond_count, iron_sword_count, diamond_sword_count,
-                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, has_wood_pickaxe,
+                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, blaze_rod_count, blaze_powder_count, ender_pearl_count, has_wood_pickaxe,
                                 has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
                             has_redstone_pickaxe,
                             )
@@ -5020,7 +5797,7 @@ def main():
                                 fire_resistance_potion_count,
                                 redstone_count,
                                 diamond_count, iron_sword_count, diamond_sword_count,
-                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, has_wood_pickaxe,
+                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, blaze_rod_count, blaze_powder_count, ender_pearl_count, has_wood_pickaxe,
                                 has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
                             has_redstone_pickaxe,
                             )
@@ -5028,55 +5805,6 @@ def main():
                             pass
                         craft_message = ""
                         craft_message_timer = 0.0
-                    elif nearby_villager is not None:
-                        if diamond_count >= nearby_villager["trade_cost"]:
-                            diamond_count -= nearby_villager["trade_cost"]
-                            if nearby_villager["trade_item"] == "iron_sword":
-                                iron_sword_count += 1
-                                selected_hotbar_index = find_inventory_slot_index(
-                                    "iron_sword",
-                                    meat_count, raw_fish_count, rotten_meat_count, bone_count,
-                                    wood_count, plank_count, stone_count, sand_count, gravel_count, dirt_count, coal_count,
-                                    iron_count, gold_count, iron_ingot_count, lighter_count, gold_ingot_count, gold_nugget_count,
-                                    fire_resistance_potion_count,
-                                    redstone_count,
-                                    diamond_count, iron_sword_count, diamond_sword_count,
-                                    diamond_block_count, obsidian_count, redstone_block_count, stick_count, has_wood_pickaxe,
-                                    has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
-                                has_redstone_pickaxe,
-                                )
-                            elif nearby_villager["trade_item"] == "diamond_sword":
-                                diamond_sword_count += 1
-                                selected_hotbar_index = find_inventory_slot_index(
-                                    "diamond_sword",
-                                    meat_count, raw_fish_count, rotten_meat_count, bone_count,
-                                    wood_count, plank_count, stone_count, sand_count, gravel_count, dirt_count, coal_count,
-                                    iron_count, gold_count, iron_ingot_count, lighter_count, gold_ingot_count, gold_nugget_count,
-                                    fire_resistance_potion_count,
-                                    redstone_count,
-                                    diamond_count, iron_sword_count, diamond_sword_count,
-                                    diamond_block_count, obsidian_count, redstone_block_count, stick_count, has_wood_pickaxe,
-                                    has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
-                                has_redstone_pickaxe,
-                                )
-                            elif nearby_villager["trade_item"] == "diamond_block":
-                                diamond_block_count += 1
-                                selected_hotbar_index = find_inventory_slot_index(
-                                    "diamond_block",
-                                    meat_count, raw_fish_count, rotten_meat_count, bone_count,
-                                    wood_count, plank_count, stone_count, sand_count, gravel_count, dirt_count, coal_count,
-                                    iron_count, gold_count, iron_ingot_count, lighter_count, gold_ingot_count, gold_nugget_count,
-                                    fire_resistance_potion_count,
-                                    redstone_count,
-                                    diamond_count, iron_sword_count, diamond_sword_count,
-                                    diamond_block_count, obsidian_count, redstone_block_count, stick_count, has_wood_pickaxe,
-                                    has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
-                                has_redstone_pickaxe,
-                                )
-                            craft_message = f"Traded {nearby_villager['trade_cost']} diamonds for {nearby_villager['trade_label']}."
-                        else:
-                            craft_message = f"Need {nearby_villager['trade_cost']} diamonds for {nearby_villager['trade_label']}."
-                        craft_message_timer = 1.8
                     else:
                         craft_message = ""
                         craft_message_timer = 0.0
@@ -5109,6 +5837,9 @@ def main():
                     obsidian_count,
                     redstone_block_count,
                     stick_count,
+                    blaze_rod_count,
+                    blaze_powder_count,
+                    ender_pearl_count,
                     has_wood_pickaxe,
                     has_stone_pickaxe,
                     has_iron_pickaxe,
@@ -5144,6 +5875,9 @@ def main():
                         obsidian_count,
                         redstone_block_count,
                         stick_count,
+                        blaze_rod_count,
+                        blaze_powder_count,
+                        ender_pearl_count,
                         has_wood_pickaxe,
                         has_stone_pickaxe,
                         has_iron_pickaxe,
@@ -5185,6 +5919,9 @@ def main():
                                 obsidian_count,
                                 redstone_block_count,
                                 stick_count,
+                                blaze_rod_count,
+                                blaze_powder_count,
+                                ender_pearl_count,
                                 has_wood_pickaxe,
                                 has_stone_pickaxe,
                                 has_iron_pickaxe,
@@ -5205,6 +5942,45 @@ def main():
                         camera_y = player_y - HEIGHT / 2 + PLAYER_SIZE / 2
                         craft_message = "Teleported to spawn."
                         craft_message_timer = 1.5
+                    elif selected_item_type == "ender_pearl" and ender_pearl_count > 0:
+                        teleport_result, teleport_message = try_use_ender_pearl(
+                            player_x,
+                            player_y,
+                            blocks,
+                            current_dimension,
+                            camera_x,
+                            camera_y,
+                            crosshair_x,
+                            crosshair_y,
+                        )
+                        if teleport_result is not None:
+                            player_x, player_y = teleport_result
+                            player_vy = 0.0
+                            on_ground = False
+                            is_mining = False
+                            mining_timer = 0.0
+                            mining_target = None
+                            ender_pearl_count -= 1
+                            camera_x = player_x - WIDTH / 2 + PLAYER_SIZE / 2
+                            camera_y = player_y - HEIGHT / 2 + PLAYER_SIZE / 2
+                            if ender_pearl_count <= 0:
+                                selected_hotbar_index = find_inventory_slot_index(
+                                    "ender_pearl",
+                                    meat_count, raw_fish_count, rotten_meat_count, bone_count,
+                                    wood_count, plank_count, stone_count, sand_count, gravel_count, dirt_count, coal_count,
+                                    iron_count, gold_count, iron_ingot_count, lighter_count, gold_ingot_count, gold_nugget_count,
+                                    fire_resistance_potion_count,
+                                    redstone_count,
+                                    diamond_count, iron_sword_count, diamond_sword_count,
+                                    diamond_block_count, obsidian_count, redstone_block_count, stick_count, blaze_rod_count, blaze_powder_count, ender_pearl_count, has_wood_pickaxe,
+                                    has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
+                                    has_redstone_pickaxe,
+                                )
+                            craft_message = "Teleported with an ender pearl."
+                            craft_message_timer = 1.2
+                        else:
+                            craft_message = teleport_message
+                            craft_message_timer = 1.2
                     else:
                         mined, target = mine_block_at_crosshair(blocks, tree_blocks, meats, camera_x, camera_y, crosshair_x, crosshair_y)
                         if mined:
@@ -5222,6 +5998,7 @@ def main():
                                     animals,
                                     meats,
                                     respawn_queue,
+                                    blocks,
                                     camera_x,
                                     camera_y,
                                     crosshair_x,
@@ -5274,7 +6051,7 @@ def main():
                                 fire_resistance_potion_count,
                                 redstone_count,
                                 diamond_count, iron_sword_count, diamond_sword_count,
-                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, has_wood_pickaxe,
+                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, blaze_rod_count, blaze_powder_count, ender_pearl_count, has_wood_pickaxe,
                                 has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
                                 has_redstone_pickaxe,
                             )
@@ -5299,7 +6076,7 @@ def main():
                                 fire_resistance_potion_count,
                                 redstone_count,
                                 diamond_count, iron_sword_count, diamond_sword_count,
-                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, has_wood_pickaxe,
+                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, blaze_rod_count, blaze_powder_count, ender_pearl_count, has_wood_pickaxe,
                                 has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
                                 has_redstone_pickaxe,
                             )
@@ -5323,7 +6100,7 @@ def main():
                                 iron_count, gold_count, iron_ingot_count, lighter_count, gold_ingot_count, gold_nugget_count,
                                 fire_resistance_potion_count,
                                 redstone_count, diamond_count, iron_sword_count, diamond_sword_count,
-                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, has_wood_pickaxe,
+                                diamond_block_count, obsidian_count, redstone_block_count, stick_count, blaze_rod_count, blaze_powder_count, ender_pearl_count, has_wood_pickaxe,
                                 has_stone_pickaxe, has_iron_pickaxe, has_gold_pickaxe, has_diamond_pickaxe,
                                 has_redstone_pickaxe,
                             )
@@ -5349,23 +6126,17 @@ def main():
         player_rect = pygame.Rect(math.floor(player_x), math.floor(player_y), PLAYER_SIZE, PLAYER_SIZE)
         in_water = rect_overlaps_water(player_rect, blocks)
 
+        move_x = 0
+        moving_left_now = False
+        moving_right_now = False
+        moving_up_now = False
+        moving_down_now = False
         if pygame.key.get_focused():
             keys_pressed = pygame.key.get_pressed()
-            moving_left = moving_left or keys_pressed[pygame.K_LEFT] or keys_pressed[pygame.K_a]
-            moving_right = moving_right or keys_pressed[pygame.K_RIGHT] or keys_pressed[pygame.K_d]
-            moving_up = (
-                moving_up
-                or keys_pressed[pygame.K_UP]
-                or keys_pressed[pygame.K_w]
-                or keys_pressed[pygame.K_SPACE]
-            )
-            moving_down = moving_down or keys_pressed[pygame.K_DOWN] or keys_pressed[pygame.K_s]
-
-        move_x = 0
-        moving_left_now = moving_left
-        moving_right_now = moving_right
-        moving_up_now = moving_up
-        moving_down_now = moving_down
+            moving_left_now = keys_pressed[pygame.K_LEFT] or keys_pressed[pygame.K_a]
+            moving_right_now = keys_pressed[pygame.K_RIGHT] or keys_pressed[pygame.K_d]
+            moving_up_now = keys_pressed[pygame.K_UP] or keys_pressed[pygame.K_w] or keys_pressed[pygame.K_SPACE]
+            moving_down_now = keys_pressed[pygame.K_DOWN] or keys_pressed[pygame.K_s]
         selected_pickaxe_tier = get_selected_pickaxe_tier(
             selected_item_type,
         )
@@ -5409,6 +6180,10 @@ def main():
                 else:
                     player_rect.top = block_rect.bottom
                 player_vy = 0.0
+
+        if resolve_rect_out_of_solids(player_rect, blocks):
+            player_vy = 0.0
+            on_ground = True
 
         # Standing detection uses a tiny probe below the feet, so walking on flat
         # ground does not require a "wake-up jump" after collision rounding.
@@ -5470,6 +6245,7 @@ def main():
             craft_message = "Entered the Nether."
             craft_message_timer = 1.6
             nether_piglin_spawn_timer = 0.0
+            nether_blaze_spawn_timer = 0.0
 
         if attack_cooldown_timer > 0:
             attack_cooldown_timer = max(0.0, attack_cooldown_timer - dt)
@@ -5635,6 +6411,9 @@ def main():
                     obsidian_count,
                     redstone_block_count,
                     stick_count,
+                    blaze_rod_count,
+                    blaze_powder_count,
+                    ender_pearl_count,
                     has_wood_pickaxe,
                     has_stone_pickaxe,
                     has_iron_pickaxe,
@@ -5748,7 +6527,7 @@ def main():
                     })
                 elif target_type == "sand":
                     drop_size = max(10, TILE_SIZE // 3)
-                    drop_type = "gravel" if random.random() < 0.05 else "sand"
+                    drop_type = "gravel" if random.random() < 0.72 else "sand"
                     meats.append({
                         "type": drop_type,
                         "x": mining_target[0] * TILE_SIZE + (TILE_SIZE - drop_size) / 2,
@@ -5771,13 +6550,26 @@ def main():
         # Keep player from flying too high out of world.
         player_y = max(-4 * TILE_SIZE, player_y)
 
-        update_animals(animals, blocks, dt, meats, respawn_queue, player_x, player_y, time_of_day, arrows)
+        animal_contact_damage, blaze_burn_time = update_animals(
+            animals,
+            blocks,
+            dt,
+            meats,
+            respawn_queue,
+            player_x,
+            player_y,
+            time_of_day,
+            arrows,
+        )
+        player_hp = max(0.0, player_hp - animal_contact_damage)
+        player_burn_timer = max(player_burn_timer, blaze_burn_time)
         update_villagers(villagers, blocks, dt, meats, villager_respawn_queue)
         update_iron_golems(iron_golems, blocks, dt, meats, iron_golem_respawn_queue)
         update_respawns(respawn_queue, animals, blocks, dt, time_of_day, current_dimension, player_x)
 
         if current_dimension == "nether":
             piglin_count = sum(1 for animal in animals if animal["name"] == "Piglin")
+            blaze_count = sum(1 for animal in animals if animal["name"] == "Blaze")
             if piglin_count < NETHER_PIGLIN_TARGET:
                 nether_piglin_spawn_timer += dt
                 if nether_piglin_spawn_timer >= NETHER_PIGLIN_SPAWN_DELAY:
@@ -5789,15 +6581,64 @@ def main():
                     nether_piglin_spawn_timer = 0.0
             else:
                 nether_piglin_spawn_timer = 0.0
+            if blaze_count < NETHER_BLAZE_TARGET:
+                nether_blaze_spawn_timer += dt
+                if nether_blaze_spawn_timer >= NETHER_BLAZE_SPAWN_DELAY:
+                    occupied_tiles = {int(a["x"] // TILE_SIZE) for a in animals}
+                    preferred_tile_x = int((player_x + PLAYER_SIZE / 2) // TILE_SIZE)
+                    blaze = spawn_nether_blaze(blocks, occupied_tiles, preferred_tile_x)
+                    if blaze is not None:
+                        animals.append(blaze)
+                    nether_blaze_spawn_timer = 0.0
+            else:
+                nether_blaze_spawn_timer = 0.0
         else:
             nether_piglin_spawn_timer = 0.0
-        update_villager_respawns(villager_respawn_queue, villagers, dt)
-        update_iron_golem_respawns(iron_golem_respawn_queue, iron_golems, dt)
+            nether_blaze_spawn_timer = 0.0
+        currently_nighttime = is_nighttime(time_of_day)
+        if currently_nighttime and not was_nighttime:
+            current_enderman_night_target = random.randint(
+                NIGHT_ENDERMAN_MIN_TARGET,
+                NIGHT_ENDERMAN_MAX_TARGET,
+            )
+
+        if current_dimension == "overworld" and not currently_nighttime:
+            animals[:] = [animal for animal in animals if animal["name"] != "Enderman"]
+
+        if current_dimension == "overworld" and currently_nighttime:
+            zombie_count = sum(1 for animal in animals if animal["name"] == "Zombie")
+            skeleton_count = sum(1 for animal in animals if animal["name"] == "Skeleton")
+            enderman_count = sum(1 for animal in animals if animal["name"] == "Enderman")
+            if (
+                zombie_count < NIGHT_ZOMBIE_TARGET
+                or skeleton_count < NIGHT_SKELETON_TARGET
+                or enderman_count < current_enderman_night_target
+            ):
+                night_spawn_timer += dt
+                if night_spawn_timer >= NIGHT_ZOMBIE_SPAWN_DELAY:
+                    if zombie_count < NIGHT_ZOMBIE_TARGET and (
+                        skeleton_count >= NIGHT_SKELETON_TARGET or zombie_count <= skeleton_count
+                    ):
+                        spawn_extra_night_zombie(animals, blocks)
+                    elif skeleton_count < NIGHT_SKELETON_TARGET and skeleton_count <= enderman_count:
+                        spawn_extra_night_skeleton(animals, blocks)
+                    elif enderman_count < current_enderman_night_target:
+                        spawn_extra_night_enderman(animals, blocks, player_x)
+                    night_spawn_timer = 0.0
+            else:
+                night_spawn_timer = 0.0
+        else:
+            night_spawn_timer = 0.0
+        was_nighttime = currently_nighttime
+        update_villager_respawns(villager_respawn_queue, villagers, blocks, dt)
+        update_iron_golem_respawns(iron_golem_respawn_queue, iron_golems, blocks, dt)
         update_items(meats, blocks, dt)
         player_hp = max(0.0, player_hp - update_arrows(arrows, blocks, dt, player_x, player_y))
         player_fire_state = {"fire_damage_timer": player_fire_damage_timer}
         player_touching_fire = rect_overlaps_block_type(player_rect, blocks, "fire")
-        player_fire_hits = accumulate_fire_damage(player_fire_state, player_touching_fire, dt)
+        if player_burn_timer > 0:
+            player_burn_timer = max(0.0, player_burn_timer - dt)
+        player_fire_hits = accumulate_fire_damage(player_fire_state, player_touching_fire or player_burn_timer > 0, dt)
         player_fire_damage_timer = player_fire_state["fire_damage_timer"]
         if player_fire_hits > 0:
             player_hp = max(0.0, player_hp - player_fire_hits)
@@ -5828,6 +6669,7 @@ def main():
             player_vy = 0.0
             on_ground = True
             player_fire_damage_timer = 0.0
+            player_burn_timer = 0.0
             portal_teleport_cooldown = PORTAL_TELEPORT_COOLDOWN
             camera_x = player_x - WIDTH / 2 + PLAYER_SIZE / 2
             camera_y = player_y - HEIGHT / 2 + PLAYER_SIZE / 2
@@ -5837,11 +6679,14 @@ def main():
                 craft_message = "You escaped the Nether with 1 heart left."
             craft_message_timer = 1.8
 
-        meats, got_meat, got_raw_fish, got_rotten_meat, got_bone, got_diamond, got_wood, got_plank, got_stone, got_sand, got_gravel, got_coal, got_iron, got_iron_ingot, got_gold, got_gold_ingot, got_gold_nugget, got_fire_resistance_potion, got_redstone, got_dirt, got_obsidian, got_diamond_block, got_redstone_block = pickup_items(player_x, player_y, meats)
+        meats, got_meat, got_raw_fish, got_rotten_meat, got_bone, got_blaze_rod, got_blaze_powder, got_ender_pearl, got_diamond, got_wood, got_plank, got_stone, got_sand, got_gravel, got_coal, got_iron, got_iron_ingot, got_gold, got_gold_ingot, got_gold_nugget, got_fire_resistance_potion, got_redstone, got_dirt, got_obsidian, got_diamond_block, got_redstone_block = pickup_items(player_x, player_y, meats)
         meat_count += got_meat
         raw_fish_count += got_raw_fish
         rotten_meat_count += got_rotten_meat
         bone_count += got_bone
+        blaze_rod_count += got_blaze_rod
+        blaze_powder_count += got_blaze_powder
+        ender_pearl_count += got_ender_pearl
         diamond_count += got_diamond
         wood_count += got_wood
         plank_count += got_plank
@@ -5867,6 +6712,7 @@ def main():
             on_ground = True
             player_hp = 10.0
             player_fire_damage_timer = 0.0
+            player_burn_timer = 0.0
             death_message_timer = 1.5
             camera_x = player_x - WIDTH / 2 + PLAYER_SIZE / 2
             camera_y = player_y - HEIGHT / 2 + PLAYER_SIZE / 2
@@ -5904,6 +6750,9 @@ def main():
                 obsidian_count,
                 redstone_block_count,
                 stick_count,
+                blaze_rod_count,
+                blaze_powder_count,
+                ender_pearl_count,
                 has_wood_pickaxe,
                 has_stone_pickaxe,
                 has_iron_pickaxe,
@@ -5945,6 +6794,9 @@ def main():
             obsidian_count,
             redstone_block_count,
             stick_count,
+            blaze_rod_count,
+            blaze_powder_count,
+            ender_pearl_count,
             has_wood_pickaxe,
             has_stone_pickaxe,
             has_iron_pickaxe,
@@ -5952,24 +6804,6 @@ def main():
             has_diamond_pickaxe,
         has_redstone_pickaxe,
         )
-
-        if current_dimension == "overworld" and is_nighttime(time_of_day):
-            zombie_count = sum(1 for animal in animals if animal["name"] == "Zombie")
-            skeleton_count = sum(1 for animal in animals if animal["name"] == "Skeleton")
-            if zombie_count < NIGHT_ZOMBIE_TARGET or skeleton_count < NIGHT_SKELETON_TARGET:
-                night_spawn_timer += dt
-                if night_spawn_timer >= NIGHT_ZOMBIE_SPAWN_DELAY:
-                    if zombie_count < NIGHT_ZOMBIE_TARGET and (
-                        skeleton_count >= NIGHT_SKELETON_TARGET or zombie_count <= skeleton_count
-                    ):
-                        spawn_extra_night_zombie(animals, blocks)
-                    elif skeleton_count < NIGHT_SKELETON_TARGET:
-                        spawn_extra_night_skeleton(animals, blocks)
-                    night_spawn_timer = 0.0
-            else:
-                night_spawn_timer = 0.0
-        else:
-            night_spawn_timer = 0.0
 
         # Camera follows player smoothly, so movement is visually obvious.
         target_camera_x = player_x - WIDTH / 2 + PLAYER_SIZE / 2
@@ -6097,6 +6931,9 @@ def main():
             obsidian_count=obsidian_count,
             redstone_block_count=redstone_block_count,
             stick_count=stick_count,
+            blaze_rod_count=blaze_rod_count,
+            blaze_powder_count=blaze_powder_count,
+            ender_pearl_count=ender_pearl_count,
             has_wood_pickaxe=has_wood_pickaxe,
             has_stone_pickaxe=has_stone_pickaxe,
             has_iron_pickaxe=has_iron_pickaxe,
@@ -6136,6 +6973,9 @@ def main():
                 obsidian_count=obsidian_count,
                 redstone_block_count=redstone_block_count,
                 stick_count=stick_count,
+                blaze_rod_count=blaze_rod_count,
+                blaze_powder_count=blaze_powder_count,
+                ender_pearl_count=ender_pearl_count,
                 has_wood_pickaxe=has_wood_pickaxe,
                 has_stone_pickaxe=has_stone_pickaxe,
                 has_iron_pickaxe=has_iron_pickaxe,
