@@ -1,6 +1,7 @@
 import math
 
 from ursina import Entity, color, destroy, scene, Mesh, Vec3
+import random
 
 from constants import (
     BASE_GROUND_HEIGHT,
@@ -10,7 +11,9 @@ from constants import (
     LOAD_RADIUS,
     TERRAIN_SEED,
     WORLD_HEIGHT,
+    WATER_LEVEL,
 )
+from entity import Animal
 
 
 NEIGHBOR_OFFSETS = (
@@ -28,6 +31,7 @@ class World:
         self.save_manager = save_manager
         self.blocks = {}
         self.block_entities = {}
+        self.animals = []
         self.loaded_chunks = set()
         self.chunk_blocks = {}
 
@@ -53,7 +57,7 @@ class World:
         if y == 0:
             return "bedrock"
         if y == surface_y:
-            return "sand" if surface_y <= BASE_GROUND_HEIGHT + 1 else "grass"
+            return "sand" if surface_y <= WATER_LEVEL + 1 else "grass"
         if y >= surface_y - 3:
             return "dirt"
         return "stone"
@@ -86,6 +90,12 @@ class World:
         for chunk_key in sorted(extra_chunks):
             self.unload_chunk(*chunk_key)
 
+    def get_tree_at(self, world_x, world_z):
+        random.seed(world_x * 31 + world_z * 17 + TERRAIN_SEED)
+        if random.random() < 0.02:
+            return random.randint(4, 5)
+        return None
+
     def load_chunk(self, chunk_x, chunk_z):
         if (chunk_x, chunk_z) in self.loaded_chunks:
             return
@@ -99,13 +109,64 @@ class World:
                 world_x = origin_x + local_x
                 world_z = origin_z + local_z
                 surface_y = self.get_surface_height(world_x, world_z)
-                for world_y in range(surface_y + 1):
+                top_y = max(surface_y, WATER_LEVEL)
+                for world_y in range(top_y + 1):
                     position = (world_x, world_y, world_z)
                     block_type = self.get_generated_block_type(position)
                     if block_type is None:
                         continue
                     self.blocks[position] = block_type
                     positions.add(position)
+
+        # Generate Trees (Logs and Leaves) for this chunk
+        for local_z in range(CHUNK_SIZE):
+            for local_x in range(CHUNK_SIZE):
+                world_x = origin_x + local_x
+                world_z = origin_z + local_z
+                
+                # Animal spawning (only on grass, low probability)
+                surface_y = self.get_surface_height(world_x, world_z)
+                if surface_y > WATER_LEVEL and surface_y >= BASE_GROUND_HEIGHT:
+                    random.seed(world_x * 73 + world_z * 41 + TERRAIN_SEED)
+                    if random.random() < 0.005:
+                        animal_type = random.choice(["pig", "cow", "sheep", "chicken"])
+                        animal = Animal((world_x, surface_y + 1, world_z), self, animal_type)
+                        self.animals.append(animal)
+                
+                # Check neighbors up to 2 blocks away for trees that might overlap into this column
+                for tx in range(world_x - 2, world_x + 3):
+                    for tz in range(world_z - 2, world_z + 3):
+                        tree_h = self.get_tree_at(tx, tz)
+                        if not tree_h:
+                            continue
+                            
+                        tree_surface = self.get_surface_height(tx, tz)
+                        if tree_surface < BASE_GROUND_HEIGHT: # Only grow on grass
+                            continue
+                            
+                        # If this column is the tree trunk itself
+                        if tx == world_x and tz == world_z:
+                            for ty in range(1, tree_h + 1):
+                                pos = (world_x, tree_surface + ty, world_z)
+                                self.blocks[pos] = "log"
+                                positions.add(pos)
+                                
+                        # Leaves logic
+                        dx = abs(world_x - tx)
+                        dz = abs(world_z - tz)
+                        if dx <= 2 and dz <= 2:
+                            random.seed(world_x * 13 + world_z * 7 + tx * 3 + tz * 11 + TERRAIN_SEED)
+                            for ly in range(tree_surface + tree_h - 1, tree_surface + tree_h + 2):
+                                is_top = (ly >= tree_surface + tree_h)
+                                radius = 1 if is_top else 2
+                                if dx <= radius and dz <= radius:
+                                    if dx == radius and dz == radius and random.random() < 0.5:
+                                        continue
+                                    pos = (world_x, ly, world_z)
+                                    # Don't overwrite logs with leaves
+                                    if pos not in self.blocks or self.blocks[pos] != "log":
+                                        self.blocks[pos] = "leaves"
+                                        positions.add(pos)
 
         for position, block_type in self.save_manager.iter_block_overrides():
             px, py, pz = position
@@ -137,6 +198,10 @@ class World:
             self.blocks.pop(position, None)
 
         self.loaded_chunks.discard(chunk_key)
+
+    def update_animals(self):
+        for animal in self.animals:
+            animal.update()
 
     def get_neighbor_positions(self, position):
         x, y, z = position
@@ -186,51 +251,51 @@ class World:
             
             x, y, z = position
             
-            # Top face (y+1)
+            # Top face (y+1) - Normal +Y. Looking down from +Y, CW.
             if (x, y+1, z) not in self.blocks:
                 verts.extend([
-                    Vec3(x-0.5, y+0.5, z-0.5), Vec3(x+0.5, y+0.5, z-0.5), Vec3(x+0.5, y+0.5, z+0.5),
-                    Vec3(x-0.5, y+0.5, z-0.5), Vec3(x+0.5, y+0.5, z+0.5), Vec3(x-0.5, y+0.5, z+0.5)
+                    Vec3(x-0.5, y+0.5, z-0.5), Vec3(x+0.5, y+0.5, z-0.5), Vec3(x+0.5, y+0.5, z+0.5), # Triangle 1
+                    Vec3(x-0.5, y+0.5, z-0.5), Vec3(x+0.5, y+0.5, z+0.5), Vec3(x-0.5, y+0.5, z+0.5)  # Triangle 2
                 ])
                 uvs.extend(face_uvs)
             
-            # Bottom face (y-1)
+            # Bottom face (y-1) - Normal -Y. Looking up from -Y, CW.
             if (x, y-1, z) not in self.blocks:
                 verts.extend([
-                    Vec3(x-0.5, y-0.5, z+0.5), Vec3(x+0.5, y-0.5, z+0.5), Vec3(x+0.5, y-0.5, z-0.5),
-                    Vec3(x-0.5, y-0.5, z+0.5), Vec3(x+0.5, y-0.5, z-0.5), Vec3(x-0.5, y-0.5, z-0.5)
+                    Vec3(x-0.5, y-0.5, z-0.5), Vec3(x-0.5, y-0.5, z+0.5), Vec3(x+0.5, y-0.5, z+0.5), # Triangle 1
+                    Vec3(x-0.5, y-0.5, z-0.5), Vec3(x+0.5, y-0.5, z+0.5), Vec3(x+0.5, y-0.5, z-0.5)  # Triangle 2
                 ])
                 uvs.extend(face_uvs)
                 
-            # Right face (x+1)
+            # Right face (x+1) - Normal +X. Looking from +X, CW.
             if (x+1, y, z) not in self.blocks:
                 verts.extend([
-                    Vec3(x+0.5, y-0.5, z-0.5), Vec3(x+0.5, y-0.5, z+0.5), Vec3(x+0.5, y+0.5, z+0.5),
-                    Vec3(x+0.5, y-0.5, z-0.5), Vec3(x+0.5, y+0.5, z+0.5), Vec3(x+0.5, y+0.5, z-0.5)
+                    Vec3(x+0.5, y-0.5, z-0.5), Vec3(x+0.5, y+0.5, z-0.5), Vec3(x+0.5, y+0.5, z+0.5), # Triangle 1
+                    Vec3(x+0.5, y-0.5, z-0.5), Vec3(x+0.5, y+0.5, z+0.5), Vec3(x+0.5, y-0.5, z+0.5)  # Triangle 2
                 ])
                 uvs.extend(face_uvs)
                 
-            # Left face (x-1)
+            # Left face (x-1) - Normal -X. Looking from -X, CW.
             if (x-1, y, z) not in self.blocks:
                 verts.extend([
-                    Vec3(x-0.5, y-0.5, z+0.5), Vec3(x-0.5, y-0.5, z-0.5), Vec3(x-0.5, y+0.5, z-0.5),
-                    Vec3(x-0.5, y-0.5, z+0.5), Vec3(x-0.5, y+0.5, z-0.5), Vec3(x-0.5, y+0.5, z+0.5)
+                    Vec3(x-0.5, y-0.5, z-0.5), Vec3(x-0.5, y-0.5, z+0.5), Vec3(x-0.5, y+0.5, z+0.5), # Triangle 1
+                    Vec3(x-0.5, y-0.5, z-0.5), Vec3(x-0.5, y+0.5, z+0.5), Vec3(x-0.5, y+0.5, z-0.5)  # Triangle 2
                 ])
                 uvs.extend(face_uvs)
                 
-            # Front face (z+1)
+            # Front face (z+1) - Normal +Z. Looking from +Z, CW.
             if (x, y, z+1) not in self.blocks:
                 verts.extend([
-                    Vec3(x+0.5, y-0.5, z+0.5), Vec3(x-0.5, y-0.5, z+0.5), Vec3(x-0.5, y+0.5, z+0.5),
-                    Vec3(x+0.5, y-0.5, z+0.5), Vec3(x-0.5, y+0.5, z+0.5), Vec3(x+0.5, y+0.5, z+0.5)
+                    Vec3(x-0.5, y-0.5, z+0.5), Vec3(x+0.5, y-0.5, z+0.5), Vec3(x+0.5, y+0.5, z+0.5), # Triangle 1
+                    Vec3(x-0.5, y-0.5, z+0.5), Vec3(x+0.5, y+0.5, z+0.5), Vec3(x-0.5, y+0.5, z+0.5)  # Triangle 2
                 ])
                 uvs.extend(face_uvs)
                 
-            # Back face (z-1)
+            # Back face (z-1) - Normal -Z. Looking from -Z, CW.
             if (x, y, z-1) not in self.blocks:
                 verts.extend([
-                    Vec3(x-0.5, y-0.5, z-0.5), Vec3(x+0.5, y-0.5, z-0.5), Vec3(x+0.5, y+0.5, z-0.5),
-                    Vec3(x-0.5, y-0.5, z-0.5), Vec3(x+0.5, y+0.5, z-0.5), Vec3(x-0.5, y+0.5, z-0.5)
+                    Vec3(x+0.5, y-0.5, z-0.5), Vec3(x-0.5, y-0.5, z-0.5), Vec3(x-0.5, y+0.5, z-0.5), # Triangle 1
+                    Vec3(x+0.5, y-0.5, z-0.5), Vec3(x-0.5, y+0.5, z-0.5), Vec3(x+0.5, y+0.5, z-0.5)  # Triangle 2
                 ])
                 uvs.extend(face_uvs)
 
@@ -239,9 +304,19 @@ class World:
             if verts:
                 mesh = Mesh(vertices=verts, uvs=uvs_by_type[b_type], static=True)
                 texture_path = f"image/{b_type}.png"
+                
                 # Using point filtering to keep the pixel-art look
-                ent = Entity(model=mesh, collider='mesh', texture=texture_path)
+                has_collider = 'mesh' # Water is removed, so all blocks have collider
+                ent = Entity(model=mesh, collider=has_collider, texture=texture_path)
                 ent.texture.filtering = None
+                # Merged chunk meshes sometimes expose winding mistakes on side faces.
+                # Rendering both sides avoids vertical faces disappearing for the player.
+                ent.double_sided = True
+                
+                # Water is removed, so no special color handling needed
+                # if b_type == "water":
+                #     ent.color = color.rgba(1.0, 1.0, 1.0, 0.85)
+                    
                 entities.append(ent)
                 
         self.block_entities[chunk_key] = entities

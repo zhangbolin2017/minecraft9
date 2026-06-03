@@ -8,6 +8,8 @@ class SaveManager:
         self.state = {
             "player": [0.0, 18.0, 0.0],
             "blocks": {},
+            "inventory": {},
+            "health": 20,
         }
         self._load()
 
@@ -29,6 +31,8 @@ class SaveManager:
         if isinstance(data, dict):
             self.state["player"] = data.get("player", self.state["player"])
             self.state["blocks"] = data.get("blocks", self.state["blocks"])
+            self.state["inventory"] = data.get("inventory", self.state.get("inventory", {}))
+            self.state["health"] = data.get("health", self.state.get("health", 20))
 
     def save(self):
         os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
@@ -44,12 +48,21 @@ class SaveManager:
     def set_player_position(self, position):
         self.state["player"] = [float(position[0]), float(position[1]), float(position[2])]
 
+    def get_health(self):
+        return self.state.get("health", 20)
+
+    def set_health(self, health):
+        self.state["health"] = max(0, min(20, health))
+
     def get_block_override(self, position):
         return self.state["blocks"].get(self._block_key(position), "__missing__")
 
     def set_block_override(self, position, block_type):
         key = self._block_key(position)
         self.state["blocks"][key] = block_type
+
+    def get_inventory(self):
+        return self.state.setdefault("inventory", {})
 
     def iter_block_overrides(self):
         for key, block_type in self.state["blocks"].items():

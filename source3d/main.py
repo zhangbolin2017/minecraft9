@@ -1,4 +1,5 @@
 import atexit
+import math
 import os
 
 from ursina import (
@@ -48,7 +49,11 @@ def get_sky_color(time_of_day):
 
 class PlayerController(Entity):
     def __init__(self, start_position, world_ref):
-        super().__init__(position=start_position)
+        super().__init__(
+            position=start_position,
+            model=None, # 确保第一人称下自身完全不可见，也没有奇怪的网格
+            collider=None, # 我们自己做了射线检测，不需要内置碰撞体
+        )
         self.world = world_ref
         self.height = 1.8
         self.speed = 5.5
@@ -56,6 +61,8 @@ class PlayerController(Entity):
         self.gravity = 20.0
         self.vertical_velocity = 0.0
         self.grounded = False
+        self.radius = 0.32
+        self.step_height = 1.05
         self.look_sensitivity_x = 120
         self.look_sensitivity_y = 90
         self.pitch = -10
@@ -67,6 +74,8 @@ class PlayerController(Entity):
         camera.rotation = (self.pitch, 0, 0)
         camera.fov = 90
         mouse.locked = False
+        self.highest_y_during_fall = start_position[1]
+        self.on_take_damage = None
 
     @property
     def forward_flat(self):
@@ -92,6 +101,101 @@ class PlayerController(Entity):
         self.pitch = max(-85, min(85, self.pitch))
         self.camera_pivot.rotation_x = self.pitch
 
+    def _block_at_point(self, x, y, z):
+        bx = math.floor(x + 0.5)
+        by = math.floor(y + 0.5)
+        bz = math.floor(z + 0.5)
+        return self.world.blocks.get((bx, by, bz))
+
+    def _is_solid_block(self, block_type):
+        return block_type is not None and block_type not in {"water", "leaves"}
+
+    def _collides_lower_body(self, position):
+        sample_heights = (0.1, 0.6)
+        for dx in (-self.radius, self.radius):
+            for dz in (-self.radius, self.radius):
+                for dy in sample_heights:
+                    block = self._block_at_point(position.x + dx, position.y + dy, position.z + dz)
+                    if self._is_solid_block(block):
+                        return True
+        return False
+
+    def _resolve_embedded_position(self):
+        if not self._collides_lower_body(self.position):
+            return False
+
+        terrain_surface_y = self.world.get_surface_height(round(self.x), round(self.z)) + 0.55
+        if self.y < terrain_surface_y:
+            self.position = Vec3(self.x, terrain_surface_y, self.z)
+            self.vertical_velocity = 0.0
+            self.grounded = True
+            self.highest_y_during_fall = self.y
+            return True
+
+        for step in range(1, 9):
+            candidate = Vec3(self.x, self.y + step * 0.5, self.z)
+            if not self._collides_lower_body(candidate):
+                self.position = candidate
+                self.vertical_velocity = 0.0
+                self.grounded = True
+                self.highest_y_during_fall = self.y
+                return True
+        return False
+
+    def _collides_at(self, position):
+        sample_heights = (0.1, self.height * 0.5, self.height - 0.1)
+        for dx in (-self.radius, self.radius):
+            for dz in (-self.radius, self.radius):
+                for dy in sample_heights:
+                    block = self._block_at_point(position.x + dx, position.y + dy, position.z + dz)
+                    if self._is_solid_block(block):
+                        return True
+        return False
+
+    def _support_height_at(self, position, max_drop=1.6):
+        support_height = None
+        steps = max(2, int(max_drop / 0.25) + 2)
+        for dx in (-self.radius, self.radius):
+            for dz in (-self.radius, self.radius):
+                for step in range(steps):
+                    sample_y = position.y - 0.05 - step * 0.25
+                    block = self._block_at_point(position.x + dx, sample_y, position.z + dz)
+                    if self._is_solid_block(block):
+                        height = round(sample_y) + 0.5
+                        if support_height is None or height > support_height:
+                            support_height = height
+                        break
+        return support_height
+
+    def _try_step_up(self, candidate):
+        lifted = Vec3(candidate.x, self.y + self.step_height, candidate.z)
+        if self._collides_at(lifted):
+            return False
+
+        support_height = self._support_height_at(lifted, max_drop=self.step_height + 0.4)
+        if support_height is None:
+            return False
+
+        if 0.0 < support_height - self.y <= self.step_height + 0.05:
+            self.position = Vec3(candidate.x, support_height, candidate.z)
+            self.grounded = True
+            self.vertical_velocity = 0.0
+            self.highest_y_during_fall = self.y
+            return True
+        return False
+
+    def _move_axis(self, dx, dz):
+        if dx == 0 and dz == 0:
+            return
+
+        candidate = Vec3(self.x + dx, self.y, self.z + dz)
+        if not self._collides_at(candidate):
+            self.position = candidate
+            return
+
+        if self.grounded and self._try_step_up(candidate):
+            return
+
     def _move_horizontal(self):
         move_direction = (
             self.forward_flat * (held_keys["w"] - held_keys["s"])
@@ -102,45 +206,75 @@ class PlayerController(Entity):
 
         move_direction = move_direction.normalized()
         move_step = move_direction * self.speed * time.dt
-        candidate = self.position + move_step
-
-        feet_origin = candidate + Vec3(0, 0.5, 0)
-        head_origin = candidate + Vec3(0, self.height - 0.1, 0)
-        blocked_feet = raycast(feet_origin, move_direction, distance=0.4, ignore=(self,), traverse_target=scene).hit
-        blocked_head = raycast(head_origin, move_direction, distance=0.4, ignore=(self,), traverse_target=scene).hit
-        if not blocked_feet and not blocked_head:
-            self.position = candidate
+        self._move_axis(move_step.x, 0)
+        self._move_axis(0, move_step.z)
 
     def _apply_vertical(self):
+        if self._resolve_embedded_position():
+            return
+
         # 兜底：如果玩家掉出世界，直接拉回地表
         if self.y < -10:
             surface_y = self.world.get_surface_height(round(self.x), round(self.z))
-            self.y = surface_y + 2.0
+            self.y = surface_y + 0.55
             self.vertical_velocity = 0.0
+            self.grounded = True
+            self.highest_y_during_fall = self.y
+            return
             
-        ray = raycast(
-            self.position + Vec3(0, self.height + 0.2, 0),
-            Vec3(0, -1, 0),
-            distance=self.height + 0.5,
-            ignore=(self,),
-            traverse_target=scene,
-        )
-        if ray.hit and self.vertical_velocity <= 0:
-            target_y = ray.world_point.y
-            if self.y <= target_y + 0.05 or ray.distance <= self.height + 0.25:
-                self.y = target_y
-                self.vertical_velocity = 0.0
-                self.grounded = True
-                return
+        if not self.grounded:
+            if self.y > self.highest_y_during_fall:
+                self.highest_y_during_fall = self.y
 
         self.grounded = False
-        self.vertical_velocity -= self.gravity * time.dt
-        self.y += self.vertical_velocity * time.dt
+        
+        current_block = self.world.blocks.get((round(self.x), round(self.y), round(self.z)))
+        head_block = self.world.blocks.get((round(self.x), round(self.y + 1), round(self.z)))
+        in_water = current_block == "water" or head_block == "water"
+        
+        if in_water:
+            # 在水中，按住空格上升，按住Shift下潜，否则缓慢下沉
+            if held_keys["space"]:
+                self.vertical_velocity = min(self.jump_speed * 0.8, self.vertical_velocity + self.gravity * time.dt * 0.5)
+            elif held_keys["left shift"]:
+                self.vertical_velocity = max(-self.jump_speed * 0.8, self.vertical_velocity - self.gravity * time.dt * 0.5)
+            else:
+                self.vertical_velocity = max(-2.0, self.vertical_velocity - self.gravity * time.dt * 0.1)
+        else:
+            self.vertical_velocity -= self.gravity * time.dt
+
+        candidate = Vec3(self.x, self.y + self.vertical_velocity * time.dt, self.z)
+        if self.vertical_velocity <= 0:
+            support_height = self._support_height_at(candidate, max_drop=max(1.6, abs(self.vertical_velocity * time.dt) + 0.8))
+            if support_height is not None and candidate.y <= support_height + 0.05:
+                if not self.grounded:
+                    fall_distance = self.highest_y_during_fall - support_height
+                    if current_block == "water" or head_block == "water":
+                        fall_distance = 0
+                    if fall_distance > 3.5 and self.on_take_damage:
+                        damage = int(fall_distance - 3.0)
+                        self.on_take_damage(damage)
+
+                self.y = support_height
+                self.vertical_velocity = 0.0
+                self.grounded = True
+                self.highest_y_during_fall = self.y
+                return
+
+        if self.vertical_velocity > 0 and self._collides_at(candidate):
+            self.vertical_velocity = 0.0
+            return
+
+        self.y = candidate.y
 
     def jump(self):
-        if self.grounded:
-            self.vertical_velocity = self.jump_speed
+        current_block = self.world.blocks.get((round(self.x), round(self.y), round(self.z)))
+        head_block = self.world.blocks.get((round(self.x), round(self.y + 1), round(self.z)))
+        in_water = current_block == "water" or head_block == "water"
+        if self.grounded or in_water:
+            self.vertical_velocity = self.jump_speed * (0.6 if in_water else 1.0)
             self.grounded = False
+            self.highest_y_during_fall = self.y
 
     def update(self):
         self._apply_look()
@@ -178,7 +312,7 @@ class HotbarUI:
             
             label = Text(
                 parent=slot,
-                text=f"{index + 1}\n{block_type}",
+                text=f"{index + 1}\n0",
                 origin=(0, 0),
                 scale=0.6,
                 color=color.white,
@@ -188,6 +322,11 @@ class HotbarUI:
             self.labels.append(label)
 
         self.set_selected(0)
+
+    def update_counts(self, inventory):
+        for index, block_type in enumerate(self.block_types):
+            count = inventory.get(block_type, 0)
+            self.labels[index].text = f"{index + 1}\n{count}"
 
     def set_selected(self, index):
         self.selected_index = index % len(self.block_types)
@@ -231,6 +370,7 @@ class Minecraft3DGame:
             color=color.rgba(1.0, 1.0, 1.0, 42/255.0),
             scale=1.01,
             enabled=False,
+            collider=None, # 防止自身阻挡射线
         )
 
         self.help_text = Text(
@@ -250,42 +390,51 @@ class Minecraft3DGame:
         )
         self.status_text = Text(parent=camera.ui, x=-0.86, y=0.31, scale=0.95, text="")
 
+        self.inventory = self.save_manager.get_inventory()
         self.hotbar = HotbarUI(HOTBAR_BLOCKS)
+        self.hotbar.update_counts(self.inventory)
         self.selected_hotbar_index = 0
         self.time_of_day = 8.0
         self.targeted_block = None
         self.targeted_normal = None
+        self.targeted_animal = None
         self.position_save_timer = 0.0
+
+        self.health = self.save_manager.get_health()
+        self.health_text = Text(parent=camera.ui, x=0, y=-0.36, scale=1.3, origin=(0, 0), color=color.rgba(1, 0.2, 0.2, 1))
+        self._update_health_ui()
+
+        self.player.on_take_damage = self.take_damage
 
         mouse.locked = False
         window.borderless = False
         window.title = WINDOW_TITLE
 
-        self._create_debug_markers()
         self._apply_selected_block()
         self._apply_lighting()
         atexit.register(self.save_and_flush)
 
+    def _update_health_ui(self):
+        full_hearts = self.health // 2
+        half_heart = self.health % 2
+        empty_hearts = 10 - full_hearts - half_heart
+        self.health_text.text = "<red>" + "♥" * full_hearts + "♡" * half_heart + "<gray>" + "♡" * empty_hearts
+
+    def take_damage(self, amount):
+        self.health -= amount
+        if self.health <= 0:
+            self.health = 20
+            # Respawn
+            self.player.y = self.world.get_surface_height(round(self.player.x), round(self.player.z)) + 2.0
+            self.player.vertical_velocity = 0.0
+            self.player.highest_y_during_fall = self.player.y
+            
+        self.save_manager.set_health(self.health)
+        self._update_health_ui()
+        self.save_manager.save()
+
     def _apply_selected_block(self):
         self.hotbar.set_selected(self.selected_hotbar_index)
-
-    def _create_debug_markers(self):
-        marker_specs = [
-            ((4, 0, 4), color.red),
-            ((12, 0, 4), color.azure),
-            ((4, 0, 12), color.orange),
-            ((12, 0, 12), color.lime),
-        ]
-        for base_position, marker_color in marker_specs:
-            for height in range(5):
-                marker = Entity(
-                    parent=scene,
-                    model="cube",
-                    position=Vec3(base_position[0], 1 + height, base_position[2]),
-                    color=marker_color,
-                    collider="box",
-                )
-                self.debug_markers.append(marker)
 
     def _apply_lighting(self):
         sky_rgb = get_sky_color(self.time_of_day)
@@ -297,14 +446,30 @@ class Minecraft3DGame:
         scene.ambient_color = color.rgba(ambient_strength/255.0, ambient_strength/255.0, (ambient_strength + 10)/255.0, 1.0)
 
     def _update_target_block(self):
+        # 忽略玩家自己、高亮框，但不再忽略动物，因为我们要能打动物
+        ignore_list = [self.player, self.highlight]
+        from entity import ItemDrop
+        ignore_list.extend(ItemDrop._all_drops)
+        
         hit_info = raycast(
             camera.world_position,
             camera.forward,
             distance=INTERACTION_DISTANCE,
-            ignore=(self.player, self.highlight),
+            ignore=ignore_list,
         )
 
         if hit_info.hit:
+            # 检查是否击中了动物
+            from entity import Animal
+            if isinstance(hit_info.entity, Animal):
+                self.targeted_animal = hit_info.entity
+                self.targeted_block = None
+                self.targeted_normal = None
+                self.highlight.enabled = False
+                return
+
+            self.targeted_animal = None
+            
             # 对于网格碰撞体，world_point 是更可靠的击中点
             # 沿着法线往回退一点点，就能落到被击中的方块内部
             hit_point = hit_info.world_point - hit_info.world_normal * 0.01
@@ -323,6 +488,7 @@ class Minecraft3DGame:
 
         self.targeted_block = None
         self.targeted_normal = None
+        self.targeted_animal = None
         self.highlight.enabled = False
 
     def _save_player_position_if_needed(self, force=False):
@@ -357,9 +523,33 @@ class Minecraft3DGame:
             and abs(pz - position[2]) < 0.8
         )
 
+    def _check_item_pickup(self):
+        from entity import ItemDrop
+        from ursina import destroy
+        
+        px, py, pz = self.player.position
+        to_remove = []
+        for drop in ItemDrop._all_drops:
+            drop.update()
+            # Simple distance check for pickup
+            dx = drop.x - px
+            dy = drop.y - (py - 0.5) # Check near feet
+            dz = drop.z - pz
+            if dx*dx + dy*dy + dz*dz < 3.0: # Pickup radius squared
+                self.inventory[drop.item_type] = self.inventory.get(drop.item_type, 0) + 1
+                self.hotbar.update_counts(self.inventory)
+                self.save_manager.save()
+                to_remove.append(drop)
+                
+        for drop in to_remove:
+            ItemDrop._all_drops.remove(drop)
+            destroy(drop)
+
     def update(self):
         self.world.update_loaded_chunks(tuple(self.player.position))
+        self.world.update_animals()
         self._update_target_block()
+        self._check_item_pickup()
 
         self.time_of_day = (self.time_of_day + time.dt * 0.35) % 24.0
         self._apply_lighting()
@@ -393,23 +583,38 @@ class Minecraft3DGame:
             self._apply_selected_block()
             return
 
-        if key in {"1", "2", "3", "4", "5"}:
-            self.selected_hotbar_index = int(key) - 1
-            self._apply_selected_block()
+        if key in {"1", "2", "3", "4", "5", "6", "7", "8", "9"}:
+            idx = int(key) - 1
+            if idx < len(HOTBAR_BLOCKS):
+                self.selected_hotbar_index = idx
+                self._apply_selected_block()
             return
 
-        if key == "left mouse down" and self.targeted_block is not None:
-            if self.world.remove_block(self.targeted_block):
-                self.save_manager.save()
-            return
+        if key == "left mouse down":
+            if self.targeted_animal is not None:
+                # 攻击动物
+                self.targeted_animal.take_damage(5)
+                return
+                
+            if self.targeted_block is not None:
+                mined_block_type = self.world.blocks.get(self.targeted_block)
+                if mined_block_type and mined_block_type not in ("bedrock", "water"):
+                    if self.world.remove_block(self.targeted_block):
+                        self.inventory[mined_block_type] = self.inventory.get(mined_block_type, 0) + 1
+                        self.hotbar.update_counts(self.inventory)
+                        self.save_manager.save()
+                return
 
         if key == "right mouse down":
             place_position = self._get_place_position()
             if place_position is None or self._player_would_overlap(place_position):
                 return
             selected_block = HOTBAR_BLOCKS[self.selected_hotbar_index]
-            if self.world.place_block(place_position, selected_block):
-                self.save_manager.save()
+            if self.inventory.get(selected_block, 0) > 0:
+                if self.world.place_block(place_position, selected_block):
+                    self.inventory[selected_block] -= 1
+                    self.hotbar.update_counts(self.inventory)
+                    self.save_manager.save()
             return
 
         if key == "escape":
