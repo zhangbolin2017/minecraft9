@@ -7,6 +7,7 @@ from constants import (
     BASE_GROUND_HEIGHT,
     BLOCK_COLORS,
     CHUNK_SIZE,
+    get_texture_asset_name,
     HEIGHT_VARIATION,
     LOAD_RADIUS,
     TERRAIN_SEED,
@@ -53,14 +54,24 @@ class World:
 
         surface_y = self.get_surface_height(x, z)
         if y > surface_y:
+            if surface_y <= WATER_LEVEL and y <= WATER_LEVEL:
+                return "water"
             return None
         if y == 0:
             return "bedrock"
+        if surface_y <= WATER_LEVEL + 1:
+            return "sand"
         if y == surface_y:
             return "sand" if surface_y <= WATER_LEVEL + 1 else "grass"
         if y >= surface_y - 3:
             return "dirt"
         return "stone"
+
+    def get_block_type(self, position):
+        block_type = self.blocks.get(position)
+        if block_type is not None:
+            return block_type
+        return self.get_generated_block_type(position)
 
     def get_chunk_coordinates(self, world_position):
         return (
@@ -132,6 +143,13 @@ class World:
                         animal_type = random.choice(["pig", "cow", "sheep", "chicken"])
                         animal = Animal((world_x, surface_y + 1, world_z), self, animal_type)
                         self.animals.append(animal)
+                elif surface_y <= WATER_LEVEL:
+                    random.seed(world_x * 97 + world_z * 59 + TERRAIN_SEED)
+                    water_depth = WATER_LEVEL - surface_y
+                    if water_depth >= 1 and random.random() < 0.04:
+                        fish_y = min(WATER_LEVEL - 0.2, surface_y + 1.2)
+                        if self.blocks.get((world_x, round(fish_y), world_z)) == "water":
+                            self.animals.append(Animal((world_x, fish_y, world_z), self, "fish"))
                 
                 # Check neighbors up to 2 blocks away for trees that might overlap into this column
                 for tx in range(world_x - 2, world_x + 3):
@@ -210,11 +228,86 @@ class World:
             for dx, dy, dz in NEIGHBOR_OFFSETS
         ]
 
-    def is_exposed(self, position):
-        for neighbor in self.get_neighbor_positions(position):
-            if neighbor not in self.blocks:
+    def _water_source_neighbors(self, position):
+        x, y, z = position
+        return [
+            (x, y + 1, z),
+            (x + 1, y, z),
+            (x - 1, y, z),
+            (x, y, z + 1),
+            (x, y, z - 1),
+        ]
+
+    def _has_adjacent_water_source(self, position):
+        for neighbor in self._water_source_neighbors(position):
+            if self.blocks.get(neighbor) == "water":
                 return True
         return False
+
+    def _refresh_chunks_for_positions(self, positions):
+        chunk_keys = set()
+        for position in positions:
+            chunk_keys.add(self.get_chunk_coordinates(position))
+            for neighbor in self.get_neighbor_positions(position):
+                chunk_keys.add(self.get_chunk_coordinates(neighbor))
+
+        for chunk_key in chunk_keys:
+            if chunk_key in self.loaded_chunks:
+                self.combine_chunk_mesh(*chunk_key)
+
+    def _spread_water_from(self, start_position):
+        changed_positions = set()
+        queue = [start_position]
+        visited = set()
+
+        while queue:
+            position = queue.pop(0)
+            if position in visited:
+                continue
+            visited.add(position)
+
+            x, y, z = position
+            if y <= 0 or y >= WORLD_HEIGHT:
+                continue
+            if position in self.blocks:
+                continue
+            if not self._has_adjacent_water_source(position):
+                continue
+
+            self.blocks[position] = "water"
+            chunk_key = self.get_chunk_coordinates(position)
+            self.chunk_blocks.setdefault(chunk_key, set()).add(position)
+            self.save_manager.set_block_override(position, "water")
+            changed_positions.add(position)
+
+            below = (x, y - 1, z)
+            if y - 1 > 0 and below not in self.blocks:
+                queue.append(below)
+
+        return changed_positions
+
+    def is_exposed(self, position):
+        for neighbor in self.get_neighbor_positions(position):
+            if self.should_render_face(position, neighbor):
+                return True
+        return False
+
+    def should_render_face(self, position, neighbor):
+        block_type = self.blocks.get(position)
+        neighbor_type = self.blocks.get(neighbor)
+
+        if neighbor_type is None:
+            return True
+        if block_type == "water":
+            return neighbor_type != "water"
+        return neighbor_type == "water"
+
+    def _get_face_texture_name(self, block_type, face_name):
+        if block_type == "grass":
+            if face_name == "top":
+                return "grass1"
+            return "dirt"
+        return get_texture_asset_name(block_type)
 
     def combine_chunk_mesh(self, chunk_x, chunk_z):
         chunk_key = (chunk_x, chunk_z)
@@ -227,8 +320,8 @@ class World:
                 destroy(entity)
             del self.block_entities[chunk_key]
 
-        vertices_by_type = {}
-        uvs_by_type = {}
+        vertices_by_texture = {}
+        uvs_by_texture = {}
         
         # Standard UV mapping for a quad face (2 triangles)
         face_uvs = [(0,0), (1,0), (1,1), (0,0), (1,1), (0,1)]
@@ -241,18 +334,16 @@ class World:
             block_type = self.blocks.get(position)
             if not block_type:
                 continue
-                
-            if block_type not in vertices_by_type:
-                vertices_by_type[block_type] = []
-                uvs_by_type[block_type] = []
-            
-            verts = vertices_by_type[block_type]
-            uvs = uvs_by_type[block_type]
             
             x, y, z = position
             
             # Top face (y+1) - Normal +Y. Looking down from +Y, CW.
-            if (x, y+1, z) not in self.blocks:
+            if self.should_render_face(position, (x, y+1, z)):
+                texture_name = self._get_face_texture_name(block_type, "top")
+                vertices_by_texture.setdefault(texture_name, [])
+                uvs_by_texture.setdefault(texture_name, [])
+                verts = vertices_by_texture[texture_name]
+                uvs = uvs_by_texture[texture_name]
                 verts.extend([
                     Vec3(x-0.5, y+0.5, z-0.5), Vec3(x+0.5, y+0.5, z-0.5), Vec3(x+0.5, y+0.5, z+0.5), # Triangle 1
                     Vec3(x-0.5, y+0.5, z-0.5), Vec3(x+0.5, y+0.5, z+0.5), Vec3(x-0.5, y+0.5, z+0.5)  # Triangle 2
@@ -260,7 +351,12 @@ class World:
                 uvs.extend(face_uvs)
             
             # Bottom face (y-1) - Normal -Y. Looking up from -Y, CW.
-            if (x, y-1, z) not in self.blocks:
+            if self.should_render_face(position, (x, y-1, z)):
+                texture_name = self._get_face_texture_name(block_type, "bottom")
+                vertices_by_texture.setdefault(texture_name, [])
+                uvs_by_texture.setdefault(texture_name, [])
+                verts = vertices_by_texture[texture_name]
+                uvs = uvs_by_texture[texture_name]
                 verts.extend([
                     Vec3(x-0.5, y-0.5, z-0.5), Vec3(x-0.5, y-0.5, z+0.5), Vec3(x+0.5, y-0.5, z+0.5), # Triangle 1
                     Vec3(x-0.5, y-0.5, z-0.5), Vec3(x+0.5, y-0.5, z+0.5), Vec3(x+0.5, y-0.5, z-0.5)  # Triangle 2
@@ -268,7 +364,12 @@ class World:
                 uvs.extend(face_uvs)
                 
             # Right face (x+1) - Normal +X. Looking from +X, CW.
-            if (x+1, y, z) not in self.blocks:
+            if self.should_render_face(position, (x+1, y, z)):
+                texture_name = self._get_face_texture_name(block_type, "side")
+                vertices_by_texture.setdefault(texture_name, [])
+                uvs_by_texture.setdefault(texture_name, [])
+                verts = vertices_by_texture[texture_name]
+                uvs = uvs_by_texture[texture_name]
                 verts.extend([
                     Vec3(x+0.5, y-0.5, z-0.5), Vec3(x+0.5, y+0.5, z-0.5), Vec3(x+0.5, y+0.5, z+0.5), # Triangle 1
                     Vec3(x+0.5, y-0.5, z-0.5), Vec3(x+0.5, y+0.5, z+0.5), Vec3(x+0.5, y-0.5, z+0.5)  # Triangle 2
@@ -276,7 +377,12 @@ class World:
                 uvs.extend(face_uvs)
                 
             # Left face (x-1) - Normal -X. Looking from -X, CW.
-            if (x-1, y, z) not in self.blocks:
+            if self.should_render_face(position, (x-1, y, z)):
+                texture_name = self._get_face_texture_name(block_type, "side")
+                vertices_by_texture.setdefault(texture_name, [])
+                uvs_by_texture.setdefault(texture_name, [])
+                verts = vertices_by_texture[texture_name]
+                uvs = uvs_by_texture[texture_name]
                 verts.extend([
                     Vec3(x-0.5, y-0.5, z-0.5), Vec3(x-0.5, y-0.5, z+0.5), Vec3(x-0.5, y+0.5, z+0.5), # Triangle 1
                     Vec3(x-0.5, y-0.5, z-0.5), Vec3(x-0.5, y+0.5, z+0.5), Vec3(x-0.5, y+0.5, z-0.5)  # Triangle 2
@@ -284,7 +390,12 @@ class World:
                 uvs.extend(face_uvs)
                 
             # Front face (z+1) - Normal +Z. Looking from +Z, CW.
-            if (x, y, z+1) not in self.blocks:
+            if self.should_render_face(position, (x, y, z+1)):
+                texture_name = self._get_face_texture_name(block_type, "side")
+                vertices_by_texture.setdefault(texture_name, [])
+                uvs_by_texture.setdefault(texture_name, [])
+                verts = vertices_by_texture[texture_name]
+                uvs = uvs_by_texture[texture_name]
                 verts.extend([
                     Vec3(x-0.5, y-0.5, z+0.5), Vec3(x+0.5, y-0.5, z+0.5), Vec3(x+0.5, y+0.5, z+0.5), # Triangle 1
                     Vec3(x-0.5, y-0.5, z+0.5), Vec3(x+0.5, y+0.5, z+0.5), Vec3(x-0.5, y+0.5, z+0.5)  # Triangle 2
@@ -292,7 +403,12 @@ class World:
                 uvs.extend(face_uvs)
                 
             # Back face (z-1) - Normal -Z. Looking from -Z, CW.
-            if (x, y, z-1) not in self.blocks:
+            if self.should_render_face(position, (x, y, z-1)):
+                texture_name = self._get_face_texture_name(block_type, "side")
+                vertices_by_texture.setdefault(texture_name, [])
+                uvs_by_texture.setdefault(texture_name, [])
+                verts = vertices_by_texture[texture_name]
+                uvs = uvs_by_texture[texture_name]
                 verts.extend([
                     Vec3(x+0.5, y-0.5, z-0.5), Vec3(x-0.5, y-0.5, z-0.5), Vec3(x-0.5, y+0.5, z-0.5), # Triangle 1
                     Vec3(x+0.5, y-0.5, z-0.5), Vec3(x-0.5, y+0.5, z-0.5), Vec3(x+0.5, y+0.5, z-0.5)  # Triangle 2
@@ -300,22 +416,21 @@ class World:
                 uvs.extend(face_uvs)
 
         entities = []
-        for b_type, verts in vertices_by_type.items():
+        for texture_name, verts in vertices_by_texture.items():
             if verts:
-                mesh = Mesh(vertices=verts, uvs=uvs_by_type[b_type], static=True)
-                texture_path = f"image/{b_type}.png"
+                mesh = Mesh(vertices=verts, uvs=uvs_by_texture[texture_name], static=True)
+                texture_path = f"image/{texture_name}.png"
                 
                 # Using point filtering to keep the pixel-art look
-                has_collider = 'mesh' # Water is removed, so all blocks have collider
+                has_collider = None if texture_name == "water" else 'mesh'
                 ent = Entity(model=mesh, collider=has_collider, texture=texture_path)
                 ent.texture.filtering = None
                 # Merged chunk meshes sometimes expose winding mistakes on side faces.
                 # Rendering both sides avoids vertical faces disappearing for the player.
                 ent.double_sided = True
                 
-                # Water is removed, so no special color handling needed
-                # if b_type == "water":
-                #     ent.color = color.rgba(1.0, 1.0, 1.0, 0.85)
+                if texture_name == "water":
+                    ent.color = color.rgba(0.68, 0.85, 1.0, 0.9)
                     
                 entities.append(ent)
                 
@@ -325,17 +440,25 @@ class World:
         pass
 
     def has_block(self, position):
-        return position in self.blocks
+        return self.get_block_type(position) is not None
 
     def remove_block(self, position):
         if position not in self.blocks:
-            return False
+            block_type = self.get_block_type(position)
+            if block_type is None:
+                return False
+            chunk_key = self.get_chunk_coordinates(position)
+            if chunk_key not in self.loaded_chunks:
+                self.load_chunk(*chunk_key)
+            self.blocks[position] = block_type
+            self.chunk_blocks.setdefault(chunk_key, set()).add(position)
 
         self.blocks.pop(position, None)
         self.save_manager.set_block_override(position, None)
         chunk_key = self.get_chunk_coordinates(position)
-        if chunk_key in self.loaded_chunks:
-            self.combine_chunk_mesh(*chunk_key)
+        changed_positions = {position}
+        changed_positions.update(self._spread_water_from(position))
+        self._refresh_chunks_for_positions(changed_positions)
         return True
 
     def place_block(self, position, block_type):

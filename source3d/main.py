@@ -18,7 +18,14 @@ from ursina import (
     window,
 )
 
-from constants import CHUNK_SIZE, HOTBAR_BLOCKS, INTERACTION_DISTANCE, SAVE_FILE, WINDOW_TITLE
+from constants import (
+    CHUNK_SIZE,
+    HOTBAR_BLOCKS,
+    INTERACTION_DISTANCE,
+    SAVE_FILE,
+    WINDOW_TITLE,
+    get_texture_asset_name,
+)
 from save_system import SaveManager
 from world import World
 
@@ -45,6 +52,13 @@ def get_sky_color(time_of_day):
     if 21 <= time_of_day or time_of_day < 5:
         return night
     return lerp_color(dawn, day, (time_of_day - 5) / 1.0)
+
+
+def get_item_ui_color(block_type):
+    color_map = {
+        "meat_fish": color.rgba(245/255.0, 170/255.0, 165/255.0, 1.0),
+    }
+    return color_map.get(block_type, color.white)
 
 
 class PlayerController(Entity):
@@ -105,10 +119,17 @@ class PlayerController(Entity):
         bx = math.floor(x + 0.5)
         by = math.floor(y + 0.5)
         bz = math.floor(z + 0.5)
-        return self.world.blocks.get((bx, by, bz))
+        position = (bx, by, bz)
+        return self.world.get_block_type(position)
 
     def _is_solid_block(self, block_type):
         return block_type is not None and block_type not in {"water", "leaves"}
+
+    def _is_in_water(self, position=None):
+        position = position or self.position
+        current_block = self._block_at_point(position.x, position.y + 0.1, position.z)
+        head_block = self._block_at_point(position.x, position.y + self.height - 0.1, position.z)
+        return current_block == "water" or head_block == "water"
 
     def _collides_lower_body(self, position):
         sample_heights = (0.1, 0.6)
@@ -120,27 +141,32 @@ class PlayerController(Entity):
                         return True
         return False
 
+    def _feet_inside_solid(self, position):
+        sample_points = (
+            (0.0, 0.0),
+            (-self.radius * 0.55, 0.0),
+            (self.radius * 0.55, 0.0),
+            (0.0, -self.radius * 0.55),
+            (0.0, self.radius * 0.55),
+        )
+        for dx, dz in sample_points:
+            block = self._block_at_point(position.x + dx, position.y + 0.05, position.z + dz)
+            if self._is_solid_block(block):
+                return True
+        return False
+
     def _resolve_embedded_position(self):
-        if not self._collides_lower_body(self.position):
+        if self._is_in_water(self.position):
+            return False
+        if not self._feet_inside_solid(self.position):
             return False
 
         terrain_surface_y = self.world.get_surface_height(round(self.x), round(self.z)) + 0.55
-        if self.y < terrain_surface_y:
-            self.position = Vec3(self.x, terrain_surface_y, self.z)
-            self.vertical_velocity = 0.0
-            self.grounded = True
-            self.highest_y_during_fall = self.y
-            return True
-
-        for step in range(1, 9):
-            candidate = Vec3(self.x, self.y + step * 0.5, self.z)
-            if not self._collides_lower_body(candidate):
-                self.position = candidate
-                self.vertical_velocity = 0.0
-                self.grounded = True
-                self.highest_y_during_fall = self.y
-                return True
-        return False
+        self.position = Vec3(self.x, terrain_surface_y, self.z)
+        self.vertical_velocity = 0.0
+        self.grounded = True
+        self.highest_y_during_fall = self.y
+        return True
 
     def _collides_at(self, position):
         sample_heights = (0.1, self.height * 0.5, self.height - 0.1)
@@ -159,9 +185,12 @@ class PlayerController(Entity):
             for dz in (-self.radius, self.radius):
                 for step in range(steps):
                     sample_y = position.y - 0.05 - step * 0.25
+                    bx = math.floor(position.x + dx + 0.5)
+                    by = math.floor(sample_y + 0.5)
+                    bz = math.floor(position.z + dz + 0.5)
                     block = self._block_at_point(position.x + dx, sample_y, position.z + dz)
                     if self._is_solid_block(block):
-                        height = round(sample_y) + 0.5
+                        height = by + 0.5
                         if support_height is None or height > support_height:
                             support_height = height
                         break
@@ -184,6 +213,9 @@ class PlayerController(Entity):
             return True
         return False
 
+    def _can_step_up(self):
+        return self.grounded or self._is_in_water(self.position)
+
     def _move_axis(self, dx, dz):
         if dx == 0 and dz == 0:
             return
@@ -193,7 +225,7 @@ class PlayerController(Entity):
             self.position = candidate
             return
 
-        if self.grounded and self._try_step_up(candidate):
+        if self._can_step_up() and self._try_step_up(candidate):
             return
 
     def _move_horizontal(self):
@@ -206,6 +238,15 @@ class PlayerController(Entity):
 
         move_direction = move_direction.normalized()
         move_step = move_direction * self.speed * time.dt
+
+        diagonal_candidate = Vec3(self.x + move_step.x, self.y, self.z + move_step.z)
+        if not self._collides_at(diagonal_candidate):
+            self.position = diagonal_candidate
+            return
+
+        if self._can_step_up() and self._try_step_up(diagonal_candidate):
+            return
+
         self._move_axis(move_step.x, 0)
         self._move_axis(0, move_step.z)
 
@@ -213,8 +254,8 @@ class PlayerController(Entity):
         if self._resolve_embedded_position():
             return
 
-        # 兜底：如果玩家掉出世界，直接拉回地表
-        if self.y < -10:
+        # 兜底：一旦掉到过低位置，立刻拉回当前列地表，避免穿过基岩层后继续下坠。
+        if self.y < 0.2:
             surface_y = self.world.get_surface_height(round(self.x), round(self.z))
             self.y = surface_y + 0.55
             self.vertical_velocity = 0.0
@@ -228,9 +269,7 @@ class PlayerController(Entity):
 
         self.grounded = False
         
-        current_block = self.world.blocks.get((round(self.x), round(self.y), round(self.z)))
-        head_block = self.world.blocks.get((round(self.x), round(self.y + 1), round(self.z)))
-        in_water = current_block == "water" or head_block == "water"
+        in_water = self._is_in_water(self.position)
         
         if in_water:
             # 在水中，按住空格上升，按住Shift下潜，否则缓慢下沉
@@ -249,7 +288,7 @@ class PlayerController(Entity):
             if support_height is not None and candidate.y <= support_height + 0.05:
                 if not self.grounded:
                     fall_distance = self.highest_y_during_fall - support_height
-                    if current_block == "water" or head_block == "water":
+                    if in_water:
                         fall_distance = 0
                     if fall_distance > 3.5 and self.on_take_damage:
                         damage = int(fall_distance - 3.0)
@@ -293,6 +332,8 @@ class HotbarUI:
         total_width = len(block_types) * 0.105
         start_x = -total_width / 2 + 0.05
         for index, block_type in enumerate(block_types):
+            texture_name = get_texture_asset_name(block_type)
+            texture_file = os.path.join(os.path.dirname(__file__), "image", f"{texture_name}.png")
             slot = Entity(
                 parent=self.root,
                 model="quad",
@@ -304,11 +345,13 @@ class HotbarUI:
             icon = Entity(
                 parent=slot,
                 model="quad",
-                texture=f"image/{block_type}.png",
+                texture=f"image/{texture_name}.png" if os.path.exists(texture_file) else None,
+                color=get_item_ui_color(block_type),
                 scale=(0.6, 0.6),
                 position=(0, 0.1, -0.1),
             )
-            icon.texture.filtering = None
+            if icon.texture:
+                icon.texture.filtering = None
             
             label = Text(
                 parent=slot,
@@ -338,27 +381,72 @@ class HotbarUI:
 
 
 class Minecraft3DGame:
+    def _clear_spawn_space(self, spawn_position):
+        x, y, z = spawn_position
+        occupied_blocks = set()
+        for dy in (0.1, 0.9, 1.7, 2.3):
+            occupied_blocks.add((
+                math.floor(x + 0.5),
+                math.floor(y + dy + 0.5),
+                math.floor(z + 0.5),
+            ))
+
+        for block_pos in occupied_blocks:
+            block_type = self.world.get_generated_block_type(block_pos)
+            if block_type is None or block_type == "bedrock":
+                continue
+            self.world.remove_block(block_pos)
+
+    def _find_spawn_position(self):
+        center_x = int(CHUNK_SIZE / 2)
+        center_z = int(CHUNK_SIZE / 2)
+        best_ground_spawn = None
+        best_ground_score = None
+
+        for dz in range(-24, 25):
+            for dx in range(-24, 25):
+                world_x = center_x + dx
+                world_z = center_z + dz
+                surface_y = self.world.get_surface_height(world_x, world_z)
+                if surface_y <= 4:
+                    continue
+
+                if self.world.get_generated_block_type((world_x, surface_y + 1, world_z)) is not None:
+                    continue
+                if self.world.get_generated_block_type((world_x, surface_y + 2, world_z)) is not None:
+                    continue
+                if self.world.get_tree_at(world_x, world_z):
+                    continue
+
+                neighbor_heights = [
+                    self.world.get_surface_height(world_x + 1, world_z),
+                    self.world.get_surface_height(world_x - 1, world_z),
+                    self.world.get_surface_height(world_x, world_z + 1),
+                    self.world.get_surface_height(world_x, world_z - 1),
+                ]
+                slope = max(abs(surface_y - height) for height in neighbor_heights)
+                if slope > 1:
+                    continue
+
+                distance_penalty = abs(dx) + abs(dz)
+                ground_score = slope * 100 + distance_penalty
+                if best_ground_score is None or ground_score < best_ground_score:
+                    best_ground_score = ground_score
+                    best_ground_spawn = (world_x, surface_y + 0.55, world_z)
+
+        return best_ground_spawn or (center_x, 18.0, center_z)
+
     def __init__(self):
         self.base_dir = os.path.dirname(os.path.abspath(__file__))
         self.save_manager = SaveManager(os.path.join(self.base_dir, SAVE_FILE))
         self.world = World(self.save_manager)
         self.debug_markers = []
-
-        saved_x, saved_y, saved_z = self.save_manager.get_player_position()
-        default_spawn_x = CHUNK_SIZE / 2
-        default_spawn_z = CHUNK_SIZE / 2
-        
-        # 强制修正玩家高度，防止读取到掉出世界的错误存档
-        surface_height = self.world.get_surface_height(round(saved_x), round(saved_z))
-        if saved_y < 0 or saved_y > 100:
-            saved_y = surface_height + 2.0
-            saved_x = default_spawn_x
-            saved_z = default_spawn_z
-            
-        self.world.update_loaded_chunks((saved_x, saved_y, saved_z))
-
-        spawn_height = self.world.get_surface_height(round(saved_x), round(saved_z)) + 2.2
-        self.player = PlayerController((saved_x, max(saved_y, spawn_height), saved_z), self.world)
+        self.spawn_position = self._find_spawn_position()
+        self.world.update_loaded_chunks(self.spawn_position)
+        self._clear_spawn_space(self.spawn_position)
+        self.player = PlayerController(self.spawn_position, self.world)
+        self.player.grounded = True
+        self.player.highest_y_during_fall = self.player.y
 
         self.sun = DirectionalLight()
         self.sun.rotation = (45, -30, 0)
@@ -425,8 +513,12 @@ class Minecraft3DGame:
         if self.health <= 0:
             self.health = 20
             # Respawn
-            self.player.y = self.world.get_surface_height(round(self.player.x), round(self.player.z)) + 2.0
+            self.spawn_position = self._find_spawn_position()
+            self.world.update_loaded_chunks(self.spawn_position)
+            self._clear_spawn_space(self.spawn_position)
+            self.player.position = Vec3(*self.spawn_position)
             self.player.vertical_velocity = 0.0
+            self.player.grounded = True
             self.player.highest_y_during_fall = self.player.y
             
         self.save_manager.set_health(self.health)
@@ -444,6 +536,22 @@ class Minecraft3DGame:
         self.sun.rotation_x = (self.time_of_day / 24.0) * 360.0 - 90.0
         ambient_strength = 18 if sky_rgb[2] < 100 else 54
         scene.ambient_color = color.rgba(ambient_strength/255.0, ambient_strength/255.0, (ambient_strength + 10)/255.0, 1.0)
+
+    def _world_to_block_position(self, world_point):
+        return (
+            math.floor(world_point.x + 0.5),
+            math.floor(world_point.y + 0.5),
+            math.floor(world_point.z + 0.5),
+        )
+
+    def _resolve_target_block(self, hit_info):
+        # 合并网格碰撞在边角处会有一点浮动，沿法线向内多采样几次更稳。
+        for depth in (0.02, 0.08, 0.16, 0.28, 0.4):
+            hit_point = hit_info.world_point - hit_info.world_normal * depth
+            block_pos = self._world_to_block_position(hit_point)
+            if self.world.get_block_type(block_pos) is not None:
+                return block_pos
+        return None
 
     def _update_target_block(self):
         # 忽略玩家自己、高亮框，但不再忽略动物，因为我们要能打动物
@@ -470,16 +578,8 @@ class Minecraft3DGame:
 
             self.targeted_animal = None
             
-            # 对于网格碰撞体，world_point 是更可靠的击中点
-            # 沿着法线往回退一点点，就能落到被击中的方块内部
-            hit_point = hit_info.world_point - hit_info.world_normal * 0.01
-            block_pos = (
-                round(hit_point.x),
-                round(hit_point.y),
-                round(hit_point.z)
-            )
-            
-            if self.world.has_block(block_pos):
+            block_pos = self._resolve_target_block(hit_info)
+            if block_pos is not None:
                 self.targeted_block = block_pos
                 self.targeted_normal = hit_info.world_normal
                 self.highlight.enabled = True
@@ -513,6 +613,13 @@ class Minecraft3DGame:
             int(round(tx + normal.x)),
             int(round(ty + normal.y)),
             int(round(tz + normal.z)),
+        )
+
+    def _get_jump_place_position(self):
+        return (
+            math.floor(self.player.x + 0.5),
+            math.floor(self.player.y - 0.5),
+            math.floor(self.player.z + 0.5),
         )
 
     def _player_would_overlap(self, position):
@@ -597,18 +704,20 @@ class Minecraft3DGame:
                 return
                 
             if self.targeted_block is not None:
-                mined_block_type = self.world.blocks.get(self.targeted_block)
-                if mined_block_type and mined_block_type not in ("bedrock", "water"):
+                from entity import ItemDrop
+                mined_block_type = self.world.get_block_type(self.targeted_block)
+                if mined_block_type and mined_block_type != "bedrock":
                     if self.world.remove_block(self.targeted_block):
-                        self.inventory[mined_block_type] = self.inventory.get(mined_block_type, 0) + 1
-                        self.hotbar.update_counts(self.inventory)
-                        self.save_manager.save()
+                        ItemDrop(Vec3(*self.targeted_block), mined_block_type)
                 return
 
         if key == "right mouse down":
-            place_position = self._get_place_position()
-            if place_position is None or self._player_would_overlap(place_position):
-                return
+            if held_keys["space"]:
+                place_position = self._get_jump_place_position()
+            else:
+                place_position = self._get_place_position()
+                if place_position is None or self._player_would_overlap(place_position):
+                    return
             selected_block = HOTBAR_BLOCKS[self.selected_hotbar_index]
             if self.inventory.get(selected_block, 0) > 0:
                 if self.world.place_block(place_position, selected_block):
