@@ -1,0 +1,21 @@
+
+=== Minecraft3D Crash ===
+Traceback (most recent call last):
+  File "d:\github\minecraft9\source3d\main.py", line 847, in <module>
+    main()
+    ~~~~^^
+  File "d:\github\minecraft9\source3d\main.py", line 841, in main
+    game = Minecraft3DGame()
+  File "d:\github\minecraft9\source3d\main.py", line 515, in __init__
+    self._sync_hotbar_slots()
+    ~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "d:\github\minecraft9\source3d\main.py", line 586, in _sync_hotbar_slots
+    self.hotbar.update_slots(self.hotbar_slots, self.inventory)
+    ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "d:\github\minecraft9\source3d\main.py", line 390, in update_slots
+    icon.texture = get_texture_resource(texture_name)
+    ^^^^^^^^^^^^
+  File "C:\Users\Administrator\AppData\Local\Packages\PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0\LocalCache\local-packages\Python313\site-packages\ursina\entity.py", line 912, in texture_setter
+    self.model.setTexture(value._texture, 1)
+                          ^^^^^^^^^^^^^^
+AttributeError: 'panda3d.core.Texture' object has no attribute '_texture'

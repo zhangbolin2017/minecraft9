@@ -9,7 +9,9 @@ class SaveManager:
             "player": [0.0, 18.0, 0.0],
             "blocks": {},
             "inventory": {},
+            "hotbar_slots": [None] * 9,
             "health": 20,
+            "tool_durability": {},
         }
         self._load()
 
@@ -32,7 +34,16 @@ class SaveManager:
             self.state["player"] = data.get("player", self.state["player"])
             self.state["blocks"] = data.get("blocks", self.state["blocks"])
             self.state["inventory"] = data.get("inventory", self.state.get("inventory", {}))
+            hotbar_slots = data.get("hotbar_slots", self.state.get("hotbar_slots", [None] * 9))
+            if not isinstance(hotbar_slots, list):
+                hotbar_slots = [None] * 9
+            hotbar_slots = hotbar_slots[:9] + [None] * max(0, 9 - len(hotbar_slots))
+            self.state["hotbar_slots"] = hotbar_slots
             self.state["health"] = data.get("health", self.state.get("health", 20))
+            tool_durability = data.get("tool_durability", self.state.get("tool_durability", {}))
+            if not isinstance(tool_durability, dict):
+                tool_durability = {}
+            self.state["tool_durability"] = tool_durability
 
     def save(self):
         os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
@@ -63,6 +74,28 @@ class SaveManager:
 
     def get_inventory(self):
         return self.state.setdefault("inventory", {})
+
+    def get_hotbar_slots(self):
+        hotbar_slots = self.state.setdefault("hotbar_slots", [None] * 9)
+        if not isinstance(hotbar_slots, list):
+            hotbar_slots = [None] * 9
+        hotbar_slots = hotbar_slots[:9] + [None] * max(0, 9 - len(hotbar_slots))
+        self.state["hotbar_slots"] = hotbar_slots
+        return hotbar_slots
+
+    def set_hotbar_slots(self, hotbar_slots):
+        normalized = list(hotbar_slots[:9]) + [None] * max(0, 9 - len(hotbar_slots))
+        self.state["hotbar_slots"] = normalized
+
+    def get_tool_durability(self):
+        tool_durability = self.state.setdefault("tool_durability", {})
+        if not isinstance(tool_durability, dict):
+            tool_durability = {}
+        self.state["tool_durability"] = tool_durability
+        return tool_durability
+
+    def set_tool_durability(self, tool_durability):
+        self.state["tool_durability"] = dict(tool_durability)
 
     def iter_block_overrides(self):
         for key, block_type in self.state["blocks"].items():
